@@ -13,6 +13,17 @@
 # *** EXTENDO FEATURE DESIRE: allow it to be clever about not working with words that are in the script but aren't voices. at it stands, the script must be exactly what is desired in the
 # final recording (no titles, unvoiced headings, directions, anything like that).
 
+
+# *** NEXT THING TO TRY:
+# when we hit a missing word, ask user to point to where it is in teh script / what it's suppoed to be, by showing all the things before and after it in the word list, and then
+# having the the user indicate which transcript lines are that word. with this manual interventino stage, many automated errors in teh transcript can be corrected and it will still
+# be quite fast, hopefully! especially if we can save 'alternate' words for repeat offenders in a dictionary that builds as the process goes along. oh yes!
+# for this, when a missing word is found it is: offer x numbered lines of the transcript for inspection, and ask the user to input a range of numers to indicate the correct lines
+# or type something to go to the next x lines if its not there (or back x lines if you like). it then takes the user input, and continues the search for the next word from the end
+# of their selected. this will all be CLI style at first, with potential for future GUI implemention to make this much more friendly and less error prone.
+
+# another category of things to try is fuzzy matching to let fewer things be considered missing
+
 # ===========================================================================
 import utils
 from pathlib import Path
@@ -23,7 +34,7 @@ basePath = Path(__file__).parent
 pathToTranscript = basePath / "testing" / "script1.txt"
 pathToExpectedScript = basePath / "testing" / "The Actual Text.txt"
 pathToAudioFile = basePath / "testing" / "audio.mp3"
-outputFolder = basePath / "testning"
+outputFolder = basePath / "testing"
 
 transcriptPhoenemsToSearchBack = 5 # how many entries in the transcriptDict can be combined in the earch for a match with a given word (see notes below)
 
@@ -63,7 +74,7 @@ wordList = utils.LoadExpectedScript(pathToExpectedScript)
 # thsi repeats until the whole transcript has been searched. then, if still no finds, the word is declared to not be in the recording
 # non-found words go into a missingDict collection for later processing - we cannot ignore them, as it is likely that some words appear in the transcript differently how they are
 # used in the script (e.g. a scripted 'and' might looked like 'an' in the transcript, in practice). So some processing, and ultimately repeating of complete passes will be done to
-# weed out such problems.
+# weed out such problems. UPDATE: the user will be asked to solve these problems by pointing out correct transcript elements
 # with one script word now accounted for, we move onto the next word, and the whole thing repeats until all words have been looked for.
 # we end up with a finalDict listing with locations of all the words, and missing dict, with all the stuff not found. there is a process where the missing word position
 #   is estimated, which gives us a new finalDict.
@@ -93,10 +104,21 @@ while(startWordIndex>-1):
     # so the process is inherently not able to deliver perfect results, and in fact is basically CERTAIN to miss things and get things wrong, unfortunately. We shall have to implement
     # measures to try to preserve all the areas where there is uncertainy for manual review, and potentially have a repeat / refinement stage to try to programatically correct the
     # reuslt of the first run through ****
+
+    # ------------------------------------------------------------
+    # ESCAPE CLAUSE
+    # this ends the main passes loop in cases where there were so many errors that the system as 'passed' through teh whole thing but can't pass the error checks that set the
+    # startWordIndex to -1 when they all pass. basically things are screwed if we get here, and it is a developer objective to get here as infrequently as possible! thsi is
+    # essentially critiacal error handling that means the program is broken.
+    if wordIndex < 0 or wordIndex-1 > len(wordList):
+        print("Auto Editor had to terminate because it cannot piece together an aligned transcript and has run out of ideas. Sorry!")
+        break
+
+    
     # ------------------------------------------------------------------------------------------------------
     # SINGLE PASS LOOP
 
-    while wordIndex > -1:
+    while wordIndex > -1 and wordIndex < len(wordList):
         checkword = wordList[wordIndex] # final word in list is the next word to look for
         checkWordFound = False
 ##        if debugMode == True:
@@ -130,9 +152,9 @@ while(startWordIndex>-1):
                     wordForFinalDict = checkTransWord # it already the full string we need
                     endTime = transcriptDict[transIndex]["end"]
                     startTime = transcriptDict[transIndex-x]["start"]
-                    if debugMode == True:
-                        print(f"Found: [{wordForFinalDict}] from {str(startTime)} to {str(endTime)}")
-                    previouslySearchedToTransIndex = transIndex-x # record the index, future searches only need to look earlier than this
+##                    if debugMode == True:
+##                        print(f"Found: [{wordForFinalDict}] from {str(startTime)} to {str(endTime)}")
+                    previouslySearchedToTransIndex = transIndex-x # record the index of the end of the concatenated word. future searches need only look later than this in the transcript
                     break # leave this search loop
                 
                 else:
@@ -151,8 +173,9 @@ while(startWordIndex>-1):
                             break # breaking the transIndex > -1 loop
             else:
                 transIndex = transIndex - 1 # loop continues
+                
         # ---------------------------------------------------------------------------------------
-
+        # COMMIT AUTOMATICALLY FOUND WORD, OR APPEAL TO USER TO MAKE DECISION ON A MISSING WORD
         # now we've eitehr checked the whole transcriptDict and not found it, or we did find out
         if checkWordFound == True:
             # lets put it in our finalDict (not its actually a list of dictinoaries)
@@ -163,13 +186,16 @@ while(startWordIndex>-1):
 
         else:
             print(f"Didn't find word: [{checkword}]")
+
             # in this case, we add the missing word to a dcinotary and note the start time of the last found word as being the likey end time of the thing that can't be found
             lastStartTime = finalDict[len(finalDict)-1]["start"]
             missingDict.append({"start": 0, "end":float(lastStartTime),"word":checkword})
 
-        # here we are are the end of the loop for a given word.
+
+        # ------------------------------------------------------------------------------------------
+        # here we are are the end of the loop for a given word from the wordList (the script)
         wordIndex = wordIndex-1
-        # --------------------------------------------------------
+        # -------------------------------------------------------------------------------------------------
 
     # ------------------------------------------------------
     # REVIEW RESULT AND PREPARE FOR NEXT PASS
@@ -180,7 +206,7 @@ while(startWordIndex>-1):
     # end tines of words that were in the script but weren't found (often names or things the transcripts will likely get wrong)
 
     if debugMode == True:
-        print("Final Dictionary List:\n")
+        print("Final Dictionary List:")
         print(finalDict) # for testing
         print ("Missing Dict List:")
         print (missingDict)
@@ -202,7 +228,7 @@ while(startWordIndex>-1):
     # check and sets the beginning point for a new pass by placing the error chain origin word into the finalDict artificially (same as the missingDict merge logic), then starting the
     # new pass from the NEXT index. in my head, this will achieve the overcoming of various transcription error possibilities, so let's find out ***
     # i'll also write the lofic for this in the utils for neatness
-    finalDict, startWordIndex = utils.ShaveFinalDictToConfirmedMatches(finalDict, wordList)
+    finalDict, startWordIndex = utils.ShaveFinalDictToConfirmedMatches(finalDict, wordList, bestFinalDict)
     # ---------------------------------------------------
 
     # END OF PASS
@@ -227,23 +253,35 @@ if(debugMode==False):
 
 utils.PrintActualScript(wordList)
 
-# lets see how similar out bestFinalDict and worldList ended up being.
-ourScript = ""
-realScript = ""
-for x in reversed(bestFinalDict):
-    ourScript += x["word"] + " "
-for x in wordList:
-    realScript += x + " "
-ld = utils.GetLevensteinDistance(ourScript, realScript)
-print(f"Transcript segments selected vs original script similarity level: {ld}%")
+# lets see how similar out bestFinalDict and worldList ended up being. - prints the leventshein similarity as a % (which mean similarity based on how many changes are needed to get from one to the other)
+utils.CompareBestFinalDictToActualScript(bestFinalDict, wordList)
+
 # =========================================================================================================
 # INTERMISSION
 
+# ----------------------------------------------------------------
+# SAFETY MARGINS
+# in my experience, the transcribing process usually puts the timestamps for a word slightly after the sound of it actually begins, which will cause the start of words to be
+# not marked propery as part of the correct audio. as a simple solution to this, i will move all start times forward by a certain safety margin, so that a little more of the
+# recording is considered correct.
+safetyMarginAmount= 0.2 # in seconds
+for x in bestFinalDict:
+    x["start"] = x["start"] - safetyMarginAmount
+    if x["start"] < 0: # lower bound for more safety, this is almost impossible to trigger in practice but if some editing has been done already, the first syllable might be right at the start of the file
+        x["start"] = 0
+        
+# --------------------------------------------------------------
+# OUTPUT TRANSCRIPT FILE
 # it may be useful to output our finalDict in the same format as the original transcript, so that it can be imported back to audacity as a label file
 # this will allow manual editing by marking allth eparts this script THINKS are the correct ones. this might slightoy speed up an editing pass done by a human,
 # and means we dont' commit to the potentiall destructive, error-hiding method of just deleting all the wrong parts and hoping the editor notices any problems that arose.
 
-# *** .txt output goes here
+bestFinalDict.reverse()
+
+newTransPath = outputFolder / "Aligned Transcript.txt"
+utils.SaveNewTranscript(newTransPath, bestFinalDict)
+
+# -----------------------------------------------------------------
 
 # that's the end of our word processing. now we move on to audio processing with teh data we've gathered.
 # =====================================================================================================

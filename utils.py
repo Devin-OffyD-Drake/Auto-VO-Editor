@@ -80,11 +80,16 @@ def PrintActualScript(wordList):
 
     print(f"Actual script:\n{script}")
 
-def ShaveFinalDictToConfirmedMatches(finalDict, wordList):
+def ShaveFinalDictToConfirmedMatches(finalDict, wordList, bestFinalDict):
     # shall return the finalDict entries that create a good match with teh script up to a given point, and an index related to that point - see comments in main loop for full logic
 
     newStartIndex = -1 # this default valueu will halt the main loop if we find the match with the script is 'good enough' the whole way. what the words 'good enough' mean are
                         # the main thing we need to decide in this function
+
+    # do time check
+    doTimeCheck = False # EXPERIMENTAL FEATURE THAT BERAKS EVERYTHING WHIEL TRYING TO FIX IT
+
+    newIndexSet = False # matters right at the end
 
     # note, the dict is backwards, bu tthe worldList is forwards, so we need to use...
     script = wordList.copy()
@@ -102,10 +107,13 @@ def ShaveFinalDictToConfirmedMatches(finalDict, wordList):
     # because the transcription is allowed to contain any number of errornous of repeated 'the's, so jumping ahead an arbitrary distance to find one isn't disallowed in in principal
 
     # ------------------------------------------------------------
-    # MAIN COMPARISON LOOP
+    # MAIN WORD COMPARISON LOOP
     errorCount = 0
     i = 0
     while i < len(finalDict) and i < len(script):
+
+        # -----------------------
+        # WORD MATCH CHECK
         a = finalDict[i]["word"].strip()
         b = script[i].strip()
 
@@ -117,33 +125,92 @@ def ShaveFinalDictToConfirmedMatches(finalDict, wordList):
 
         # enough errors to call it a break in the script?
         if errorCount >= errorRes:
-            newStartIndex = i - errorCount # note its -errorCount as we want to go back to when the errors started - in a momnet thish will be moved on 1 more by the processing to come, see below
+            newStartIndex = i - errorCount # note its -errorCount as we want to go back to when the errors started - in a momnet this will be moved on 1 more by the processing to come, see below
+            newIndexSet = True
             break
-
+        
         i = i+1 # end of main loop
+        # -------------------------
+
+    # ---------------------------------------------------------
+    # TIME JUMP CHECK LOOP
+    if doTimeCheck == True:
+        # this check runs not on the fianlDict, but on the previous bestFinalDict + finalDict combo aka what the output of this pass would ultimately be.
+        # we are looking for cases where something appears out of time sequence, mainly meaning a word thats timestamps are studdenly further long, then the next work jump sback to a previous
+        # point. this can happen when passes are joined together and a previous pass contains a troulemaker word that was let in due to a false positive in the transcript of perhaps as a
+        # result of manual meddling, like the missingDict integration step. so, we will make a temp complete dict to look through here, and be careful about what index we need to use
+        # as a result.
+        tjStartIndex = 0 # i wish i could yse null to show us that it was never changed, as all values are theoretically valid. i will use a bool instead
+        tjStartIndexSet = False
+        tempDict = bestFinalDict.copy()
+        tempDictLen = len(tempDict) # need to store this for future index stuff
+        tempDict.extend(finalDict) # now its an estimate of the finished pass output
+        i = 0
+        iNext = 1
+        
+        while i < len(tempDict) and iNext<len(tempDict):
+
+            if tempDict[i]["end"] < tempDict[iNext]["start"]: # if the next one has a higher time, it was found earlier in the transcript loop (goes backwards yeah), which should never happen
+                tjStartIndex = i - tempDictLen # we substract the length of the orignal dict, and so if startindex<0 we know the problem was actually in the PREVIOUS pass.
+                tjStartIndexSet = True
+                word = tempDict[i]["word"]
+                print(f"Time Jump Check has triggered. Word: {word}")
+                break
+                
+            i = i + 1
+            iNext = i +1
+
+        if tjStartIndexSet == True: # if false, this check found nothing, and we will do nothing, simples
+            if(tjStartIndex < 0):
+                # the newStartIndex will need to be BEFORE teh start of the current pass, which requires us to totally discard our finalDict and shave the bestFinalDict down to teh
+                # trouble point. since we have the refs to them, we can go ahead, and then the main loop calling this should carry on merrily
+                newStartIndex = i # LOGIC SHIFT occuring here where newStartIndex starts to refer ONLY the index of the word list, not final dict. final dict will be discarded
+                newIndexSet = True
+                del bestFinalDict[newStartIndex:] # slices this down to the troublemaker
+                finalDict.clear()
+                print(f"bestFinalDict has been stripped back to index {newStartIndex}.")
+
+            else: # the problem was in the current pass. this might actually be impossibe to trigger because the current pass is always in a chronological order. but let's handle it anyway.
+                if(tjStartIndex < newStartIndex):
+                    newStartIndex = tjStartIndex # we allow this to overwruite the previous check's troublemaker point, if its earlier
+                    newIndexSet = True
 
     # ----------------------------------------------------------
     # AMMENDMENT
-    # now, if start index isn't -1, we need to add a word to the final dict from the script, and then start the next pass from the next word
-    if newStartIndex > -1:
-        # *** coming soon
+    # now, if start index isn't -1, we ideally need to manually indentify the troublemaker and handle it specially, and then start the next pass from the next word
+    # *** however, since no complete way to know the troublemaker has been developed yet, we can't do much but skip it and try to get the rest right for the time being
+
+    if newStartIndex > -1 and len(finalDict)>0: # second check because the time skip check might have done drastic things that invalidate this step
 
         # ESTIMATE THE FINALDICT ENTRY FOR THE TROUBLEMAKER WORD - SOMEHOW!***
 
 
-        # GET RID OF THE BIT THAT WILL BE REGENERATED IN NEXT PASS
         # next pass starts from next index
         newStartIndex = newStartIndex -1
 
-        # slice off the part we don't want anymore
+        # GET RID OF THE BIT THAT WILL BE REGENERATED IN NEXT PASS
         del finalDict[newStartIndex:] # python is good for this kinda thing, even ifthis syntax looks meaningless
 
-        # finally we note that because the word list is ordered forwards but iterated bacjwards, the index is actually...
-        newStartIndex = len(wordList)-1-newStartIndex
+    # ---------------------------------------------------------
 
+
+    if newIndexSet == True:
+       # finally we note that because the word list is ordered forwards but iterated bacjwards, the index is actually...
+        newStartIndex = len(wordList)-1-newStartIndex # if it goes below 0, the next pass won't happen, so dont need to catch that here
+        # and also note we can't do this without that if tur statement because we rely on the value being -1 to mean that things are fine. yeah... this is getting messy...
+        
     return finalDict, newStartIndex
 
 
+def CompareBestFinalDictToActualScript(bestFinalDict, wordList): # thing that compares what the script will be according to finalDict, versus what it should be, using Levenstein distance
+    ourScript = ""
+    realScript = ""
+    for x in reversed(bestFinalDict):
+        ourScript += x["word"] + " "
+    for x in wordList:
+        realScript += x + " "
+    ld = GetLevensteinDistance(ourScript, realScript)
+    print(f"Transcript segments selected vs original script similarity level: {ld}%")
 
 def GetLevensteinDistance(word1, word2): # taken from somewhere or other
     m, n = len(word1), len(word2)
@@ -170,5 +237,17 @@ def GetLevensteinDistance(word1, word2): # taken from somewhere or other
     similarity_percentage = similarity * 100
     
     return similarity_percentage
+
+def SaveNewTranscript(path, entries): # copilot provided function to output our finalDict list in teh same format as the transcript input. simple enough, python is good for this.
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            for item in entries:
+                line = f"{item['start']}\t{item['end']}\t{item['word']}\n"
+                f.write(line)
+        print(f"Aligned Transcript saved at {path}")
+        
+    except:
+        print(f"Failed to save transcript at {path}")
+    
 
 
