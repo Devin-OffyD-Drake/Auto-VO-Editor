@@ -23,6 +23,23 @@
 
 # another category of things to try is fuzzy matching to let fewer things be considered missing
 
+# *** need to improve what happens when a file isn't found / load fails
+
+# *** super guess mode, where the code will happily take whatever the transcript search functin found as the index rather than ask for user input. thsi wlil make mistakesn often,
+# but allows you to actually get through massive, error-ridden transcripts and have some output that is mostly vaguely close to the correct locations. unsuitable for any auto-editing
+# but for manual editing aids, the transcript may still be quite useful.
+
+# *** when we load transcript and script, we need something that converts all numbers to words in a clever and accurate way, or vice versa. they need to be the same. we need to
+# avoid a case where 'eleventh' is transcribed as [11] and [th], which is what openVINO may well do.
+
+# *** a lesser-guess mode, where the main search loop can do some fussy searching with the levenstein comparison, searching a set distance ahead and if no match, taking whatever
+# combo of transcript entries gives the highest score (perhaps if teh score is over some particular threshold)
+
+# *** whenever the user provides input, store what the search word was and the transcript text was. this can be refered to find future transcription spellings of a word
+# e.g. if the word 'Zhang' is always 'jang' in the transcript, stuff like that.
+
+# *** when scaning the transcript, have it auto-fail when jumping a certain distance ahead, since this will be very rare under normal operation, and will probably save a load of user inputs
+
 # ===========================================================================
 # HEADER AND CONSTANTS
 import utils, userInterface # the other scripts in this program
@@ -32,8 +49,8 @@ debugMode = True
 
 # define our paths to files *** this may be done with parameters or in a GUI in teh future
 basePath = Path(__file__).parent
-pathToTranscript = basePath / "testing" / "script1.txt"
-pathToExpectedScript = basePath / "testing" / "The Actual Text.txt"
+pathToTranscript = basePath / "testing" / "Egypt2Trans.txt"
+pathToExpectedScript = basePath / "testing" / "Egypt2.txt"
 #pathToAudioFile = basePath / "testing" / "audio.mp3" # this script doesn't need to interact with the audio file as it stands, we start from a user-provided transcript and give another one back
 outputFolder = basePath / "testing"
 
@@ -51,10 +68,10 @@ wordList = utils.LoadExpectedScript(pathToExpectedScript)
 # we define a dictionary that will hold useful refs to allow our UI script to operate alongside this main script, mainly for neatness,
     # even though it does invoke the unneatness of using this ball #refusingToUseOOPBecauseIWantToLearnHowToDoThingsAnotherWay
     # VERY IMPORTANT: remember its a mix of refs and values, so teh dicts are refs can be udpated freely, the indicides are value copies so you can't transmit changes automatically
-uiBall = {"wordList":wordList, "transDict":transcriptDict, "finalDict":{}, "indexUI":0, "wordIndex":0}
+uiBall = {"wordList":wordList, "transDict":transcriptDict, "finalDict":{}, "bestFinalDict":{}, "indexUI":0, "wordIndex":0}
 
 #if(debugMode == True):
- #   print(transcriptDict)
+   # print(transcriptDict)
   #  print(wordList)
 
 # ===========================================================================
@@ -97,6 +114,7 @@ uiBall = {"wordList":wordList, "transDict":transcriptDict, "finalDict":{}, "inde
 startWordIndex = len(wordList)-1 # first pass will be the whole thing, and after recent user-input updates, i would expect most (all?) uses to only require 1 pass
 bestFinalDict = transcriptDict.copy() # this is just to hold the right structure for the final output of the pass, and will be updated/replaced with a better versino after each pass
 bestFinalDict.clear()
+uiBall["bestFinalDict"] = bestFinalDict # store this as it has a niche use in the UI
 
 while(startWordIndex>-1):
 
@@ -108,7 +126,7 @@ while(startWordIndex>-1):
 
     maxSearches = transcriptPhoenemsToSearchBack
 
-    previouslySearchedToTransIndex = len(transcriptDict)-1 # this is the 'read-head' point we searh forward from
+    previouslySearchedToTransIndex = len(transcriptDict) # this is the 'read-head' point we searh forward from - THERE IS A -1 TO MAKE IT IN THE FINAL INDEX IN TEHMAIN LOOP BELOW VVV
     # due to errors in the imperfect transcription process, sometimes the search can jump too far ahead in teh search for some strange spelling of a word and perhaps find it,
     # so the process is inherently not able to deliver perfect results, and in fact is basically CERTAIN to miss things and get things wrong, unfortunately. We shall have to implement
     # measures to try to preserve all the areas where there is uncertainy for manual review, and potentially have a repeat / refinement stage to try to programatically correct the
@@ -162,11 +180,16 @@ while(startWordIndex>-1):
                     wordForFinalDict = checkTransWord # it already the full string we need
                     endTime = transcriptDict[transIndex]["end"]
                     startTime = transcriptDict[transIndex-x]["start"]
-##                    if debugMode == True:
-##                        print(f"Found: [{wordForFinalDict}] from {str(startTime)} to {str(endTime)}")
+                    if debugMode == True:
+                        print(f"Found: [{wordForFinalDict}] from {str(startTime)} to {str(endTime)}, transIndex: {transIndex-x}")
 
                     previouslySearchedToTransIndex = transIndex-x # record the index of the START of the concatenated word. (context check feature assumes its the start, dont change); future searches need only look later than this in the transcript
                     transIndiciesUsed = list(range(transIndex-x,transIndex+1)) # should give us all the indicies of our compond, or just 1 entry if no compound. +1 because of how range bounds works
+
+                    # *** when updating the preciousSearchedtoTranindex, we could have something print if the change in value is very large, because tha tnormally
+                    # means that an error has occured. having that message in the output flow will make it easy to seek the user error correction thing to a the point the
+                    # transcript index was last reasonable looking, as the erroneous word tehy are correcting will often be at that location
+
                     break # leave this search loop
                 
                 else:
@@ -230,10 +253,18 @@ while(startWordIndex>-1):
                 print(f"\nDidn't find word [{checkword}] in the transcript. Please indicate which transcript line numbers correspond to this word, if any.")
             else:
                 print(f"\nThe word [{checkword}] was found in the transcript but in the incorrect context. " +
-                      "Using the provided context, please indicate which transcript line numbers correspond the correct instance of this word, if any.")
-            
-            uiBall["indexUI"] = previouslySearchedToTransIndex # this is what will 'scroll' our view if the user changes it. this specific choice puts it where the 'readhead' is
+                      "Using the provided context, please indicate which transcript line numbers correspond the correct instance of this word, if any.\n"
+                      +"Note this may have been caused by manually selecting the wrong instance of this word in previous input rounds (wrong = not the final take).")
+
+
+            # update: we now have a built in serach function to get the transcript display into roughly the right place. we can use that now to get a good start point
+            searchedIndex = userInterface.EstimateTransIndexForAWordFromContext(uiBall)
+            if searchedIndex == -1:
+                uiBall["indexUI"] = previouslySearchedToTransIndex # this is what will 'scroll' our view if the user changes it. this specific choice puts it where the 'readhead' is
                                                                     # which may suck if an error caused it to jump ahead, like our classic 'alfaw' testing example.
+            else:
+                uiBall["indexUI"] = searchedIndex
+                
             # take user input for what to do next
             newTransIndex = -1
             newTransIndex = userInterface.ProcessUserInput(checkword, uiBall) # what we do, and the updates needed to finalDict, are all handled in here. it has its own loop to keep the
