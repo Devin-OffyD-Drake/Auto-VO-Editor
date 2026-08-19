@@ -18,6 +18,7 @@
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------------
 import numpy as np
+import utils
 
 # i think this fcuntion was never used, and the keys on the uiBall will be removed
 ##def CreateContextRefStrings(uiBall):
@@ -33,13 +34,15 @@ import numpy as np
 ##    uiBall["transString"] = transString
 
 
-def PrintTranscriptLines(index, uiBall):
+def PrintTranscriptLines(index, uiBall, scrolled = False):
     # formats and prints a console UI for viewing entries in the transciption dict, from a given index on, a given distance onwards, for use in letting the user select given indicies
+    # with the optional arg, if this is being called after scrolling our view, we won't show the index marker, because no particular index post-scroll is important
 
     uiBall["indexUI"] = index # storing this so other things can see it, because i am not using OOP for no reason meaning it can't be a variable on this 'class'
     transDict = uiBall["transDict"]
 
     showIndexMarker = True # adds something to distguish which index we are building this around, as it may be the one the user is looking for, if this function was fed nicely
+    # *** this thing doesn't work when you scroll, need to make sure it only marks something after opening / an automatic search, not after a window scroll
 
     # transDict display constants
     priorLinesToShow = 60 # size of the window NOTE NOTE NOTE that while i put 'lines' in the names of these, we have changed to a columns models that means this isn't hte line count - this wil be worked out later on
@@ -86,12 +89,11 @@ def PrintTranscriptLines(index, uiBall):
                 transWord = transDict[showIndex]["word"]
                 
                 #  here is what will display for each entry. i want to have the one that is the official ui index be distinct in some way, as often it will be what we're looking for
-                if showIndex == index and showIndexMarker == True:
+                if showIndex == index and showIndexMarker == True and scrolled==False:
                     col = f"{showIndex:<{iStringWidth}}***[{transWord}]"
                 else:
                     col = f"{showIndex:<{iStringWidth}}   [{transWord}]"
                 thisLine.append(col)
-
                 
                 if len(col) > maxColWidthSoFar: # storing this so our columsn will hopefully always be wide enough for longest possible thing
                     maxColWidthSoFar = len(col)
@@ -129,8 +131,8 @@ def PrintTranscriptLines(index, uiBall):
             dataOutput += f"{s:<{colWidth}}" # the > makes it left align the columns
         print(dataOutput)
 
-    if showIndexMarker == True: # info regarding the index marker idea. might remove if its very often incorrect, we shall see.
-        print("*** = estimated vicinity of previous word found. What you are looking for might be close. If it isn't, it is likely an error has occured.\nSearch the transcript for the correct entry, and then the program will verify if there is an error in prior transcript entries.")
+    if showIndexMarker == True and scrolled==False: # info regarding the index marker idea. might remove if its very often incorrect, we shall see.
+        print("*** = Current Transcript Search Position")
     print(dividingLine) # just for formating / ease of display
 
 
@@ -150,12 +152,11 @@ def ProcessUserInput(wordSearchedFor, uiBall):
     while inputComplete == False:
         print("Nearby Context Words In Script: " + GetSearchedWordContext(uiBall["wordList"], uiBall["wordIndex"]))
         print()
-        uInput = input(f"Select the rows numbers corresponding to [{wordSearchedFor}] (single number, or a range formated as X-Y).\nType 'next' or 'prev' to scroll the selection of transcript rows." +
-                       f" Type 'cancel' to not include [{wordSearchedFor}] in the finished output.\n")
+        uInput = input(f"Select the rows numbers corresponding to [{wordSearchedFor}] (single number, or a range formated as X-Y).\n" +
+                       "If you can't see it, type 'search' to try to find it automatically. Type 'help' for a full list of commands.\n")
+
         uInput = uInput.strip()
 
-
-        
         # now we'll see what we got. we handle the allowed things, and refuse to continue unless something valid was given
 
         # is it a single number?
@@ -174,6 +175,7 @@ def ProcessUserInput(wordSearchedFor, uiBall):
             newTransIndex = intInput
             inputComplete = True
 
+        # is it a range?
         elif "-" in uInput: # range input attempted - we will do a slightly different version of the above finalDict appending, sorry about the reptiation
             parts = uInput.split("-")
             if len(parts) == 2: # 2 numbers, that's a good sign, try to parse them
@@ -220,9 +222,20 @@ def ProcessUserInput(wordSearchedFor, uiBall):
             else:
                 print("Too many dashes, not a valid range.")
 
+        # is it a seek command? we check this by looking for the word seek as the first characters, then assume the rest will be a single number
+        elif "seek" in uInput.lower():
+            seekInput = uInput.lower().replace("seek", "").strip()
+            if seekInput.isdigit():
+                intInput = int(seekInput)
+                ScrollTranscriptWindow(False, uiBall, intInput) # first arg doesn't actually matter when this function isused with its optional arg
+            else:
+                print("Invalid seek command. Format is: seek X, where X is the index number to center the list on.")
+
         else:
             # its not a number, and doesn' thave -. so lets assume its a written command.
-
+      
+            # *** a 'cancel all' mode where it will just take cancel as teh option for all future questions and let you output whatevetr yuo got as the transcript so far
+            # once i have 'super guess mode' i will implement this in place of cancel-all
             match uInput:
 
                 case "next" | "n":
@@ -231,12 +244,30 @@ def ProcessUserInput(wordSearchedFor, uiBall):
                 case "prev" | "p":
                     ScrollTranscriptWindow(False, uiBall)
 
+                case "start" | "s":
+                    ScrollTranscriptWindow(False, uiBall, 0)
+
+                case "end" | "e":
+                    ScrollTranscriptWindow(False, uiBall, len(uiBall["transDict"])-1)
+
                 case "cancel" | "c":
                     # this menas we just want to give up on the word and not include it in the final dict.
                     # i think we can just do nothing, as the calling code will carry on assuming the matter was resolved and start looking for the next word
                     # actually to make sure we ignore this word for sure, we shall ""-ifiy it in the wordList
                     uiBall["wordList"][uiBall["wordIndex"]] = ""
                     inputComplete = True
+
+                case "search" | "?": # tries to guess where the current word is from prior transcript entries and a fussy matching method
+                    searchedIndex = EstimateTransIndexForAWordFromContext(uiBall)
+                    ScrollTranscriptWindow(False, uiBall, searchedIndex)
+
+                case "help" | "h": # prints out some info on all the commands that are allowed
+                       print(f"Options for interacting with the transcript search process:\n" +
+                             "1) Enter an Index number to indicate it corresponds to the searched-for word.\n"
+                             +"2) Enter a range of Index numbers like 100-105 if the searched-for word covers a range.\n"
+                             +"3) Enter 'next' or 'prev' to scroll the selection of transcript rows.\n"
+                            +"4) Enter 'search' to have the program try to find the word via a rough match (warning: may indicate the wrong word, check carefully).\n"
+                       +f" Type 'cancel' to not include [{wordSearchedFor}] in the finished output.\n")
 
                 case _:
                      # not valid, the loop will go around again
@@ -250,21 +281,27 @@ def ProcessUserInput(wordSearchedFor, uiBall):
     return newTransIndex # returns as -1 if none was set
            
 
-def ScrollTranscriptWindow(forwards, uiBall):
+def ScrollTranscriptWindow(forwards, uiBall, scrollToIndex = -1):
     # shows the next range for the transcript window. make forwards = false to change the directino of movement
+    # optioan arg lets you scroll to a given place instead
 
-    windowSlideDistance = 35 # its probably a good idea to have this be lower than the window size defined in the ui printing function
-
-    newIndex = uiBall["indexUI"]
-    if forwards == True:
-        newIndex = newIndex + windowSlideDistance
+    scrolled = False
+    if scrollToIndex == -1:
+        windowSlideDistance = 100 # its probably a good idea to have this be lower than the window size defined in the ui printing function
+        scrolled = True
+        
+        newIndex = uiBall["indexUI"]
+        if forwards == True:
+            newIndex = newIndex + windowSlideDistance
+        else:
+            newIndex = newIndex - windowSlideDistance
     else:
-        newIndex = newIndex - windowSlideDistance
+        newIndex = scrollToIndex
 
     # validate / clamp range
     newIndex = np.clip(newIndex,0,len(uiBall["transDict"])-1)
 
-    PrintTranscriptLines(newIndex, uiBall)
+    PrintTranscriptLines(newIndex, uiBall, scrolled) # uiBall index will be set right away in here
 
 def GetSearchedWordContext(wordList, wordIndex):
     # when asking the user for a specific word, it's easier to give them a load of words around it in the list as context
@@ -285,5 +322,90 @@ def GetSearchedWordContext(wordList, wordIndex):
         context = context + " " + wordList[wordIndex+i]
         i = i +1
 
-
     return context
+
+def EstimateTransIndexForAWordFromContext(uiBall):
+    # we will try to guess where in the transindex the currently searched for word is, by looking at the script characters that come AFTER it,
+    # and trying to match them to a series of transDict characters starting from each index. the match does not need to be exact, and we can search the whole transcript in principcal
+    # the idea is the real position will likely contain something that at least vaguely looks like the real script, if the window is large enough, whereas any other point will only
+    # be able to resmeble it by accident. if the script contains repeating setnences deliberately, then may god have mercy on our souls.
+    # to decide our output, i will get a levenshein score for how good our comparison looks from each index, then return the best one, with honourable mentions to
+    # other higher scorers (printed out so the user can seek those to check as well if needed)
+
+    # all the transDict entries that are confirmed so far. these should representing everything that comes after the searched-for word
+    #tempTransDict = utils.GetConfirmedTransDictList(uiBall["transDict"], uiBall["finalDict"], uiBall["bestFinalDict"])
+    tempTransDict = uiBall["transDict"].copy()
+
+    # how many characters to make our comparison with. needs to be big enough to avoid accidental matches, small enough to avoid the fact teh transcript can
+    # contain arbitrarily large amounts of non-script content which will muddy our comparison
+    contextWindow = 20 # no logic behind this chosen value, just guessing
+
+    # -----------------------------------------------
+    # PREPARE SCRIPT CONTEXT STRING FOR COMPARISON
+    scriptContext = ""
+    i = 1 # start the below loop at i = 1 as we will compare with everything after the search word, NOT including it, as our confirmed transDict list doesn't have it yet, obvs. we are comparing only adjacent data.
+    wl = uiBall["wordList"]
+    wIndex = uiBall["wordIndex"]
+    while len(scriptContext) < contextWindow and wIndex + i < len(wl):
+        scriptContext += wl[wIndex + i].strip()
+        i += 1
+    if len(scriptContext) > contextWindow:
+        scriptContext = scriptContext[0:contextWindow-1] # now we have the right number of characters
+        
+    contextWindow = len(scriptContext) # we need this because if we're up against teh end of the word list and have too few charcters, we'll just have to do this job with a lesser context window
+    #print(f"Searching for previously matched transcript positions that most match script context: {scriptContext}")
+    # ------------------------------------------------
+    # MAIN SEARCH LOOP
+
+    indexScores = [] # i will make a list of dicts that have the index from the transcript, and the score. we will utilmately just score by score and have our candidates
+    i = 0
+
+    # WHERE TO START
+    # we don't really need to loop the whole thing. while that's teh safest method, we could take the shortcut of assuming that we will be earlier thanthe lowest index used in the final
+    # dict - unfortuantely we don't have access to previousTransIndexSearchedTo. Or do we...? - update: no.
+    lowestIndex = len(tempTransDict)-1 # super caveman way of finding this because i have no vibecoding right now wwaahh
+    for x in uiBall["finalDict"]:
+        ti = x["transIndexList"][0]
+        if ti < lowestIndex:
+            lowestIndex = ti
+    
+    print(f"Searching for [{wl[wIndex]}] via its intended script context. This might take a moment for long transcripts.")
+    while i + contextWindow < len(tempTransDict): # we'll stop bothering to search as we get the 'front' of our search area to the end, to avoid conplication with the window being mismatched in size
+
+        transContext = ""
+        j = 0
+        # loop over the next [contextWindow] entries, building our string
+        while len(transContext) < contextWindow and i + j < len(tempTransDict):
+            transContext += tempTransDict[i + j]["word"]
+            j += 1
+        transContext = transContext[0:contextWindow] # trim to right size as we probably went over
+
+        # now let's make our comparison
+        score = utils.GetLevensteinDistance(scriptContext, transContext)
+        indexScores.append({"index":tempTransDict[i]["transIndexList"][0],"score":score, "context":transContext})
+
+        i += 1
+
+    #print(indexScores) # testing
+
+    # ------------------------------------------------------
+    # PROCESS RESULTS
+    # by now, we have a list of the all the scores we've found. their index in their own list will be the same as the matching transIndex.
+    # here is a coppilot python-fu method to get a list of the 5 best indicies from the score list without actually sorting the list, hopefully.
+    topCount = 5
+    if topCount > len(indexScores):
+        topCount = len(indexScores)
+    if topCount > 0:
+        indexScores.sort(key=lambda d: d["score"], reverse=True) # makes our dict have the best scores at hte top. now lets take our pick.
+        bestString = ""
+        for i in range(0,topCount):
+            bestString += f"[{str(indexScores[i]['index'])}] "
+        print(f"Best suspected locations of [{wl[wIndex]}] are: {bestString}")
+
+        # we shall return teh best one, potentially to jump there automatically
+        return indexScores[0]['index'] -1 # i will add -1 because in practice it is going to be the entry 1 step earlier that where the best match is (assuming best match is the actual words said withotu mistakes inteh run up to the word in question)
+    else:
+        print(f"Search for word [{wl[wIndex]}] has failed. Sorry.")
+        return -1
+    
+    

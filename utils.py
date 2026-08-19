@@ -251,23 +251,8 @@ def CheckNewWordContext(wordList, wordListIndex, transDict, finalDict, bestFinal
     # big helper function that will see whether a word added to the finalDict looks good according to the recently other used transcipt dict entries, which should, if all is correct, look
     # a lot like the prior entries in the script when jammed together
 
-    # make a tenp version of the bestfinalDict + finalDict i.e. th ebest final result we have available
-    tempDict = bestFinalDict.copy()
-    tempDict.extend(finalDict)
-
-    # -----------------------------------------------------
-    # GET THE TRANSCRIPT CONTEXT
-    # we need a versino of the transDict that only contains the indicies which have been used so far. first we can use our tempDict to see all the indicies we need
-    tIndexList = []
-    for x in tempDict:
-        for y in x["transIndexList"]:
-            tIndexList.append(y)
-
-    # we also need everytrhing strictly sorted in transIndex order. we also need to remove repeats (the set does this), which i think can happen legitiamtely but not sure.
-    tIndexList = sorted(set(tIndexList))
-
-    # now filter a copy of the transDict. luckily python makes this real easy
-    tempTransDict = [transDict[i] for i in tIndexList]
+    # get the relevant transDict entries
+    tempTransDict = GetConfirmedTransDictList(transDict, finalDict, bestFinalDict)
 
     # we will make a string of a given length from this new transdict, taking only indexes that are higher than the newlyAddedTranIndex (which will be all of them in a perfect world, not guaranteed Id on't think)
     contextWindowSize = 10
@@ -333,6 +318,30 @@ def GetTempTransDictIndexForTransIndex(tempTransDict, targetTransIndex): # copil
             return i
     return None
 
+
+def GetConfirmedTransDictList(transDict, finalDict, bestFinalDict):
+    # makes a list of dictionaries, like the 'transDict' object, but only containing rows that are currently believed to be confirmed matched.
+
+      # make a tenp version of the bestfinalDict + finalDict i.e. th ebest final result we have available
+    tempDict = bestFinalDict.copy()
+    tempDict.extend(finalDict)
+
+    # -----------------------------------------------------
+    # GET THE TRANSCRIPT CONTEXT
+    # we need a versino of the transDict that only contains the indicies which have been used so far. first we can use our tempDict to see all the indicies we need
+    tIndexList = []
+    for x in tempDict:
+        for y in x["transIndexList"]:
+            tIndexList.append(y)
+
+    # we also need everytrhing strictly sorted in transIndex order. we also need to remove repeats (the set does this), which i think can happen legitiamtely but not sure.
+    tIndexList = sorted(set(tIndexList))
+
+    # now filter a copy of the transDict. luckily python makes this real easy
+    tempTransDict = [transDict[i] for i in tIndexList]
+
+    return tempTransDict
+
 def CheckFinalDictForTroublemakers(confirmedIndex, finalDict):
     # returns false + the finalDict index no if any final dict entry has a transIndex earlier than the confirmedIndex. for logic, see the place this si called in the main script
 
@@ -348,4 +357,5 @@ def CheckFinalDictForTroublemakers(confirmedIndex, finalDict):
         i += 1
 
     return troublemakerFound, troublemakerIndex
+
 
