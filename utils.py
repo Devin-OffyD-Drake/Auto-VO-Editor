@@ -2,6 +2,7 @@
 
 import re
 import numpy as np
+from collections import Counter
 
 # first we need a function that will take our transcript file, and turn it into a structure with three values per entry: start time, end time, and the word/phoenem.
 def LoadTranscript(path):
@@ -24,12 +25,13 @@ def LoadTranscript(path):
                 word = re.sub(r"[^\w\s]", "", word).strip().lower() # gonna work all in lower case for this, and no punctuation (note this may leave word as empty string) *** may want to ignore the empty rows depending on how the final recording edits end up sounding with these left in
                 
                 entries.append({
-                    "start": float(start),
-                    "end": float(end),
+                    "start": round(float(start), 5),
+                    "end": round(float(end), 5),
                     "word": word,
                     "transIndexList":[index],
                     "wordIndex":0
                 }) # we're making a list of dictionaries, with 3 keys, which lets us call them back with something like entries[100]["start"] tp get the start numebr for row 100.
+                # added the rounding because sometimes there is an annoying 00000001 tick on these, which we can ignore
 
                 # that transIndexList one is just there because other dict structures copy the structure of these transcript dictionaries,
                 # and they need will store the transcript index they correspond to. especialy as the dict can sometimes be copied wholesale into the result dictinoary lists.
@@ -43,7 +45,7 @@ def LoadTranscript(path):
             # once we've got our transDict here, there is a problem: i have noticed the transcription output from openVINO sometimes gets 2 small words or phonemsn that are very
             # close together mixed up. what it does is given then the same start time, but the correct tiemtimes, whoever because its all sorted by start time, it ends up having them
             # in the wrong order. so, i will boldly assume that the end times are all correct, at least, as that appears to be true from what i've seen so far. thus i will switch the
-            # list to be sorted by end time
+            # list to be sorted by end time - ALSO ASSUMES END TIMES ARE ALL DIFFERENT, which in my experience is a solid assumption, open vino works properly in this regard
             entries.sort(key=lambda d: d["end"]) # i think taht's all it takes, more python wizardry, provided by copilot
             # HOWEVER we also need to update teh self referencing indicies now too
             i = 0
@@ -247,9 +249,10 @@ def SaveNewTranscript(path, entries): # copilot provided function to output our 
         print(f"\nFailed to save transcript at {path}")
 
 
-def CheckNewWordContext(wordList, wordListIndex, transDict, finalDict, bestFinalDict, transIndiciesUsed):
+def CheckNewWordContext(wordList, wordListIndex, transDict, finalDict, bestFinalDict, transIndiciesUsed, fuzzyMatch = False):
     # big helper function that will see whether a word added to the finalDict looks good according to the recently other used transcipt dict entries, which should, if all is correct, look
     # a lot like the prior entries in the script when jammed together
+    # use optioanl fuzzymatch arg to make it use the fuzzy match comparison to decide it things are 'equal enough'
 
     # get the relevant transDict entries
     tempTransDict = GetConfirmedTransDictList(transDict, finalDict, bestFinalDict)
@@ -283,7 +286,7 @@ def CheckNewWordContext(wordList, wordListIndex, transDict, finalDict, bestFinal
     i = 0
     startIndex = wordListIndex
     while startIndex + i < startIndex + contextWindowSize and startIndex + i < len(wordList):
-        wordContext += wordList[startIndex+i] # this latter tag makes it append the word backwards, which is required for accurate reverse construction of all characters, if you think abou tit
+        wordContext += wordList[startIndex+i]
         i += 1
 
     # ----------------------------------------------------------
@@ -302,7 +305,9 @@ def CheckNewWordContext(wordList, wordListIndex, transDict, finalDict, bestFinal
     # as a side note, in thsi comparison you might think that user-confirmed words will be an issue. when a word is in the script but not correctly transcribed, the user picks out
     # some transcript entries for it. this is now a correct match but make theprior context appear wrong for subsequent word when this scan runs. BUT i shall actually be updating the
     # transcript list with user=provided confirmed word from the script, such that things run smoothly. just so you know
-    if wordContext == transContext:
+    if fuzzyMatch == True:
+        return FuzzyMatchWords(transContext,wordContext,False)
+    elif wordContext == transContext:
         #print(f"Context report for {wordList[wordListIndex]}.\nTranscript Context: {transContext}\nScript Context:     {wordContext}") # testing only
         return True
     else:
@@ -358,4 +363,188 @@ def CheckFinalDictForTroublemakers(confirmedIndex, finalDict):
 
     return troublemakerFound, troublemakerIndex
 
+def FuzzyMatchWords(compareWord, scriptWord, showResult = True):
+    # if two words are close enough, we shall delcare them matched. what 'close enough' means shall be defined in here
+
+    # i want longer words to require a little less similarlity. we can't have 'hi' and 'hit' be matched because they are only 1 change different, but we go want 'osiriss' and 'ossiris'
+    # lets require 100% match up to 4 characters, 80% at 5 characters, and see hwo it goes
+
+    # the problem with all this is that the transword can have 1 character words appended to it, like if the word checked befoer it is 'i' or 'a' then we will end up with
+    # comparisons like worda, wordi, which will go through as close enough, using up more transindexes then expected. potentially, chaos? or acceptable risk of fuzzymatching?
+    # well teh risk will have to be acceptable, and we shall see how the ultimately resilts are effected.
+
+    requiredMatch = 100
+    if len(compareWord) > 4:
+        requiredMatch = 80
+
+    score = GetLevensteinDistance(compareWord, scriptWord)
+
+    if showResult == True:
+        print(f"Fuzzy Match Check: {compareWord} vs {scriptWord} - {score}") # for testing
+
+    if score >= requiredMatch:
+        return True
+    else:
+        return False
+    
+
+def GetListOfAllCommitedTransIndexes(finalDict, bestFinalDict): # NOT USING THIS ANYMORE, WILL LEAVE JUST IN CASE I CHANGE MY MIND
+    # returns a list of numbers, all teh indicies that are being used in teh finaldicts. having this to hand will let us look back at previous sections of the transcript
+    # and looking for skipped over words with reduced risk of accidentally re-taking a word already used. make sense? good.
+
+    indexList = []
+    for x in bestFinalDict:
+        indexList.extend(x["transIndexList"])
+    for x in finalDict:
+        indexList.extend(x["transIndexList"]) # will often be adding a single value, but sometimes its a handful
+    
+    return indexList # in princpcal can return empty list here
+
+
+def IterateDictTransIndicies(finalDict,bestFinalDict, transDict, insertedIndex):
+    # for use when a new index is added to teh transdict by some automated code. we need to find all refernces to indexes higher than than in the dicts and iterate them,
+    # since the transidct list is now 1 index longer
+
+    # lets be lazy
+
+    for x in finalDict:
+        i = 0 # found ou tthe h ard way that a for y in list y +1 method dont' work!
+        while i < len(x["transIndexList"]):
+            x["transIndexList"][i] += 1
+            i += 1
+
+    for x in bestFinalDict:
+        i = 0
+        while i < len(x["transIndexList"]):
+            x["transIndexList"][i] += 1
+            i += 1
+
+    # for the transdict we can be extra sure by just reseting the index to be the new correct one every time this update is called
+    i = 0;
+    while i < len(transDict):
+        transDict[i]["transIndexList"] = [i]
+        i += 1
+
+
+def GetKeywordsList(transcriptDict, wordList, debugMode):
+    # a function that will return a list of words that appear in the transcript and script only 1 time, which has uses in our troublemaker hunting efforts
+
+    # first i need all the transcript words in regular list format, same as wordList
+    transWordList = []
+    for x in transcriptDict:
+        if x["word"] not in ("", " "): # just to keep it easier, as some entries are blank, shouldn't matter but lets be safer
+            transWordList.append(x["word"])
+
+    # EXTRA STEP TIME
+    # we also need to only consider words that are not part of any larger words also in the list. the reason is arises from the following case: Bes. The word Bes was in a script
+    # as a name, and appeared in the transcript as part of thebes, as 2 entries 'the, bes'. meanwhile the real transcipr for Bes was 2 entries, 'B, ess'. transcripts are weird.
+    # the result is an infinite loop of finding the troublemaker over and over and looping back to where bes is meant to be in the script.
+    # one consideration to combat this is to throw out from teh word list any word that is contained within another word.
+    # *** could also have a minimum length requiremenet to reduce chance of error?
+    newWordList = []
+    for x in wordList:
+        safeToUse = True
+        for y in wordList:
+            if x!=y and x in y: # e.g. if bes is in thebes, it won't be used, reducing the chance of this annoying error
+                safeToUse = False
+                break;
+        if safeToUse == True:
+            newWordList.append(x)
+    # we end with a list of words that are not containing in any other words.
+    if debugMode == True:
+        print(f"Number of words not containing other words in script: {len(newWordList)}")
+    # --------------------------------------------------------------------------------
+    # Make our unique pairs list - copilot vibecode alert
+    # copilot told me to use this method with teh 'counter' function, imported at the top
+    c1 = Counter(transWordList)
+    c2 = Counter(newWordList)
+
+    # items that appear exactly once in each list
+    unique1 = {x for x in transWordList if c1[x] == 1} # magically gives the entries that only appear once
+    unique2 = {x for x in newWordList if c2[x] == 1}
+
+    if debugMode == True:   
+        print(f"Keyword List: {list(unique1 & unique2)}") # testing
+
+    # intersection of the unique sets
+    return list(unique1 & unique2) # this will magically give us the things that are in both lists
+
+def TroubleMakerCheckAndHandling(uiBall, transIndex, finalDict, superGuessMode = False):
+    # outsourced modular version of trouble maker handling, in which the final dict is checked for entries being out of order compared to the transcript, and then we
+    # react depending on the use mode. transIndex should be the transcript index of something you are certain has been matched correctly.
+
+    returnWordIndex = -1
+    returnTransIndex = -1
+
+    # after a user input or keyword detection, we can go through our final dict and see if any words places in earlier were from a lower trans index (ie. they were supposed to appear later in the search).
+    # these are the mythical TROUBLEMAKERS, where a script word was transcribed wrong, but correctly later on, or mistakenly transcribed from another word later on.
+    # in these cases, we ask teh user to manually locate the trouble maker, then roll the wordIndex back there, strip our finalDict down, and restart our process from the next
+    # word. this should get everything back on teh right track, and we can repeat this if it happens again.
+    troublemakerFound, troublemakerIndex = CheckFinalDictForTroublemakers(transIndex, finalDict)
+
+    if troublemakerFound == True:
+        x = finalDict[troublemakerIndex]
+
+        if superGuessMode == False: # no communication with user in super guess mode, this is silent error correction (outside of debug info I suppose)
+            print(f"\nWarning: A word, [{x['word']}] previously found in the transcript may have been taken from the wrong context, or been mistaken for another word." 
+                  " Please confirm the correct instance of it.")
+            
+            # for where the UI needs to point, we can hedge that if the word BEFORE the trouble maker was right, then the real thing the troublemaker was supposed to detect is near that
+            if troublemakerIndex>0:
+                uiBall["indexUI"] = finalDict[troublemakerIndex-1]["transIndexList"][0]
+            else:
+                uiBall["indexUI"] = troublemakerIndex
+        else:
+            print(f"Super Guess Mode discovered a troublemaker word: [{x['word']}]. It's true location will be guessed, and the processing will be reset to this position.")
+            #print(f"Full details of troublemaker entry: {x}") # testing
+            #wait = input("Press Enter to continue.")
+
+
+        # now we cut everything from the troublemaker onwwards out of the finalDict list, reset the wordIndex to pretend we're looking for that one again, then head back
+        # to teh user interface to look for the replacement
+        wordIndex = x["wordIndex"] # we will then nartuarlly cycle on from here at the end of current wordIndex loop, and it will all be smooth sailing. :D :D :D :D ;D
+        uiBall["wordIndex"] = wordIndex
+        del finalDict[troublemakerIndex:]  # nifty python way of clipping the list
+
+        #print(finalDict) # testing
+        ## testing, just wanna see the context readouts after our deletion
+        #a, b = utils.CheckNewWordContext(wordList, wordIndex, transcriptDict, finalDict, bestFinalDict, finalDict[-1]["transIndexList"])
+        
+        # USER INPUT OR GUESS MODE GUESSING
+        if superGuessMode == False:
+            newTransIndex = userInterface.ProcessUserInput(uiBall["wordList"][wordIndex], uiBall) # this should sort things out, if the user can be trusted LOL
+        else:
+            # we need to guess.
+            # guess logic is simple that the word will be added with timestamps based on the previous word (assuming its correct, hmmm), and we also update the transcript to
+            # make our guess look right so it will all pass future context checks. we have a function for this, since it can be called from elsewhere too.
+            newTransIndex = SuperGuessWord(finalDict,uiBall["wordList"][wordIndex],wordIndex,uiBall["bestFinalDict"],uiBall["transDict"])
+
+        if newTransIndex>-1: # IF THE USER INPUT OR SUPER GYESS CHANGES SOMETTHING, EG THEY DIDN'T CANCEL / SKIP THE WORD
+            returnTransIndex = newTransIndex
+            returnWordIndex = wordIndex
+
+    # return where we are in the word list now, and where we are in the transript now
+    return returnWordIndex, returnTransIndex
+
+def SuperGuessWord(finalDict, word, wordIndex, bestFinalDict, transcriptDict):
+    # takes a word and puts it in the finalDict and the transcript, using previous entry in finalDict as a guide for the timings. we are just estimating where the word is,
+    # and trying to get any label to appear somewhere near the right place.
+    # returns a transIndex for where to serach next i.e. the previouslySearchedtoIndex thing
+    
+    lastEntry = finalDict[-1]
+    guessIndex = lastEntry["transIndexList"][0]
+ 
+    #make our fake transcript entry so the context checks will play nice with our skip
+    entry = {"start":round(lastEntry["start"] - float(0.1),5),"end":lastEntry["start"],"word":word,"transIndexList": [guessIndex],"wordIndex":wordIndex}
+    transcriptDict.insert(guessIndex, entry) # index changes handled a few lines down
+    # we arbitrarily make the entry 0.1 second long, just want something to appear in the final label file without messing up any proper order of timing
+    # due to inserting a new index into a list whose index numbers are stored EVERYWHERE- SIGH - we need to go through the finaldict, bestFinalDict,
+    # and transDict and iterate all the recorded transcript indexes up by 1 if they are larger than guessIndex, sorry lololololol
+    IterateDictTransIndicies(finalDict,bestFinalDict, transcriptDict, guessIndex)
+
+    finalDict.append(entry) # to complete the skipping process in a 'everything is fine' looking way, to add our new perfect dummy transcript entry as the finalDict entry for thsi word. all done!
+
+    print(f"Super Guess Mode added a dummy transcript entry at index {guessIndex}: {entry}") # testing
+
+    return guessIndex + 1 # +1 to keep our safety tradition of starting next search on the 'end' of the old one
 

@@ -28,6 +28,15 @@ The workflow for the use of this program will be:
 
 ## Update History
 
+### 0.5
+The big Super Guess Mode update, which allows the script to produce a much more automated and potentially error prone final output at rapid speed. 
+Intregrates a new 'Troublemaker Hunter' automated error checking system that is much better at dealing with the assorted problems raised by transcription errors.
+So the script now has 2 main modes: automatic (versions 0.1 and 0.5) and user-input based (0.3 and 0.4). User input can allow for a perfect final transcript, but its
+quite slow to achieve, defeating the purpose of the program. Super Guess Mode will be the new default approach, seeking to achieve a 'good enough' result in a fraction of the time.
+
+### 0.4
+Fuzzy matching is now available, reducing the amount of user input needed when transcripts are inaccurate (i.e. very often). This only effects words of 5 characters or more, and requires 80%+ plus similarlity (Levenstein similarity - based on the amount of changes needed to get to the exact match).
+
 ### 0.3
 Added the ability for the program to ask the user to confirm the correct transcript entries for cases where a solid automatic match cannot be established. 
 A basic CLI has been added to facilitate this, with handy features to make finding the correct entry quicker and easier.
