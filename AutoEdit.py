@@ -16,18 +16,11 @@
 # *** EXTENDO FEATURE DESIRE: allow it to be clever about not working with words that are in the script but aren't voices. at it stands, the script must be exactly what is desired in the
 # final recording (no titles, unvoiced headings, directions, anything like that).
 
-
 # *** NEXT THING TO TRY:
 # if we force the user to manually select at least some words, it will let our post-checks trigger. it is essential it happen at least once, so perhaps the final word will always ask
 # so that the check is performed on teh maximum possible amount of the final result.
 
-# another category of things to try is fuzzy matching to let fewer things be considered missing
-
 # *** need to improve what happens when a file isn't found / load fails
-
-# *** super guess mode, where the code will happily take whatever the transcript search functin found as the index rather than ask for user input. thsi wlil make mistakesn often,
-# but allows you to actually get through massive, error-ridden transcripts and have some output that is mostly vaguely close to the correct locations. unsuitable for any auto-editing
-# but for manual editing aids, the transcript may still be quite useful.
 
 # *** when we load transcript and script, we need something that converts all numbers to words in a clever and accurate way, or vice versa. they need to be the same. we need to
 # avoid a case where 'eleventh' is transcribed as [11] and [th], which is what openVINO may well do.
@@ -38,7 +31,7 @@
 # *** whenever the user provides input, store what the search word was and the transcript text was. this can be refered to find future transcription spellings of a word
 # e.g. if the word 'Zhang' is always 'jang' in the transcript, stuff like that.
 
-# *** when scaning the transcript, have it auto-fail when jumping a certain distance ahead, since this will be very rare under normal operation, and will probably save a load of user inputs
+
 
 # ===========================================================================
 # HEADER AND CONSTANTS
@@ -47,7 +40,7 @@ from pathlib import Path
 
 debugMode = True
 
-# define our paths to files *** this may be done with parameters or in a GUI in teh future
+# define our paths to files *** this may be done with parameters or in a GUI in teh future (same for basically all the inputs here and more yee)
 basePath = Path(__file__).parent
 pathToTranscript = basePath / "testing" / "Egypt2Trans.txt"
 pathToExpectedScript = basePath / "testing" / "Egypt2.txt"
@@ -58,6 +51,21 @@ transcriptPhoenemsToSearchBack = 30 # how many entries in the transcriptDict can
 # only reason to limit this is performance, but because i have improved the part that combined phonems so that it breaks the loop when it sees its not going anywhere, there is now
 # not much to be lost in allowing big searches - they will only actauly happen in cases where they are needed
 
+maxAllowedTranscriptJumpDistance = 100 # if the next word isn't found this many tarnscript entries ahead, we treat the word as not found, and throw the question to teh user
+# this will reduce instances of not detecting a word, then jumping really far ahead and finding something else, wrongly making it look like the word was found. doesnt eliminate
+# the possibility, but the post-user input checks can find them when they happen, this is just about reduction. this value needs to be large enought that legimate strings of mistakes
+# in the transcript can be scanned over to get the next legit word.
+# SET THIS TO ZERO TO DISABLE THIS FEATURE
+
+useFuzzyMatching = True
+# lets the matching of transcript to script words consider close matches to be a match, i.e. things with a high levenstein score, where 1 letter is different or something
+# this will possibly account for unusual words, or cases where a word like 'guessed' becomes 'guest' and we kinda wanna go ahead anyway. this will inevitably lead to mistakes, so it
+# can't be used with will auto editing. but for quickly making a transcript for manual editing assistance, the mistakes might well be acceptable / rare enough. we shall see.
+
+superGuessMode = True 
+# i am replacing the preior super guess mode with a simple new approach: if a word isn't found, we just drop it and move on to the next one without updating the trans index
+# if a context error occurs e.g. it picked the wrong instance of a word, we remove it, and then also skip it instead of asking for clarification
+# also note that super guess mode overrides useFuzzyMatching ie. fuzzy matchin grules will not apply during a guess mode run.
 # ===========================================================================
 
 # DATA IMPORTS AND INITS
@@ -73,6 +81,21 @@ uiBall = {"wordList":wordList, "transDict":transcriptDict, "finalDict":{}, "best
 #if(debugMode == True):
    # print(transcriptDict)
   #  print(wordList)
+
+# FUZZY MODE OR GUESS MODE
+# the fuzzy matching mode is only really meant to be used with the proper seraching mode. in guess mode, we're going to treat all missing words as exact matches, and I want the
+# context checks to go ahead and determine if a found word is incorrect without any fuzzy matching causing errors in that context matching. long story short, super guess mode
+# will overwride fuzzy mode
+if useFuzzyMatching == True and superGuessMode == True:
+    print("When Super Guess Mode is enabled, Fuzzy Matching is not allowed. Fuzzy Matching will be disabled for this run.")
+    useFuzzyMatching = False
+
+# AUTO TROUBLEMAKER HANDLING UPDATE
+# we will pick out 'keywords' from the script, which are special words that appear only once in the transcript. this allows us to be "certain" of their position (not really because of
+# transcription errors but we are at least somewhat confident). We can use this certainty to lok back through the collected transcript entries to see if any actually occur later on,
+# which indicates a read-head jump due to transcription error. The first step in this process is to identity which words are suitable for triggering this check.
+keywordsList = utils.GetKeywordsList(transcriptDict, wordList, debugMode)
+# also we are not gonna do any fuzzy matchin with this, its too important
 
 # ===========================================================================
 
@@ -116,6 +139,8 @@ bestFinalDict = transcriptDict.copy() # this is just to hold the right structure
 bestFinalDict.clear()
 uiBall["bestFinalDict"] = bestFinalDict # store this as it has a niche use in the UI
 
+print(f"Commencing transcription matching process. Fuzzy Match Mode: {useFuzzyMatching}. Super Guess Mode: {superGuessMode}. Words to match: {len(wordList)}.")
+
 while(startWordIndex>-1):
 
     finalDict = transcriptDict.copy() # gets the right structure - NOTE THAT FINALDICT IS MORE LIKE PASSDICT, a thing holding the results of a single pass. bestFinalDict is the REAL final dict. sorry.
@@ -125,12 +150,14 @@ while(startWordIndex>-1):
     wordIndex = startWordIndex
 
     maxSearches = transcriptPhoenemsToSearchBack
+    minSearches = 5 # somewhat arbitrary, helps for reasons stated when its used below
 
     previouslySearchedToTransIndex = len(transcriptDict) # this is the 'read-head' point we searh forward from - THERE IS A -1 TO MAKE IT IN THE FINAL INDEX IN TEHMAIN LOOP BELOW VVV
     # due to errors in the imperfect transcription process, sometimes the search can jump too far ahead in teh search for some strange spelling of a word and perhaps find it,
     # so the process is inherently not able to deliver perfect results, and in fact is basically CERTAIN to miss things and get things wrong, unfortunately. We shall have to implement
     # measures to try to preserve all the areas where there is uncertainy for manual review, and potentially have a repeat / refinement stage to try to programatically correct the
     # reuslt of the first run through ****
+
 
     # ------------------------------------------------------------
     # ESCAPE CLAUSE
@@ -149,177 +176,256 @@ while(startWordIndex>-1):
         checkword = wordList[wordIndex] # final word in list is the next word to look for
         checkWordFound = False
 
-        # ----------------------------------------------------------------------------------------
-        # PER CHECKTRANSWORD LOOP
-        # in which we may try to concatened it with previous entries a few times and cgeck again, before moving on check the next transword in the next iteration of the loop
-
+        # ===========================================================================================================
+        # PER WORD LOOP - the main meat of this, and a big loop in 2 parts, once with the transdict searching loop,
+        # then with a post search check and update section feat. user input or super guess mode
+        
         transIndex = previouslySearchedToTransIndex-1 # this is recorded upon a succeful find so teh next word loop starts in the relevant place
         transIndiciesUsed = [] # we also need to list all indicies use in teh case of compound words, to store in finalDict for assorted reporting/degbugging purpsoes
+
+        # word by word message, if you like
+        wordMsg = f"Start of search for [{checkword}] with transIndex: {transIndex})"
+        if debugMode == True and checkword in keywordsList:
+            wordMsg += " - KEYWORD"
+        print(wordMsg)
+
+        checkWordFound = False
+
+        # -----------------------------------------------------------------------------------------------
+        # KEYWORD HANDLING + ESCAPE HATCH
+        # Keywords do not require a search, and can be handled more simply. it is also important for the trouble maker handling that we are sure the keywords are
+        # in the one and only place they can be. for the sake of avoiding pryamid code, I'll handle this here, then the rest of the while loop will be the normal version
         
-        print(f"Start of search for [{checkword}] with transIndex: {transIndex})")
-        checkTransWord = "" 
-        startTime = 0.00
-        endTime = 0.00
+        if checkword in keywordsList:
+            # there is only 1, and we always know its an exact 1 to 1 match, since that was a condition of making the keyword list. that makes our job here easy.
+            transEntry = {}
+            for x in transcriptDict:
+                if x["word"] == checkword:
+                    x["wordIndex"] = wordIndex # we set this, and the transIndexList entry in the dict will already be set, as transDict etnries just have a list of 1 with their own index in it
+                    transEntry = x
+                    break;
 
-        while transIndex > -1:
-            checkTransWord = "" # reset
-            x = 0
-            # -----------------------------------------------------------
-            # CONCATENATION WITH OTHER TRANSWORDS LOOP
-            while (x < maxSearches) and (transIndex - x > -1):         # note that we need the second check to avoid problelms when we've shaved the transcriptDict all the way down
-                checkTransWord = transcriptDict[transIndex-x]["word"] +checkTransWord # frontally concat the previous transWord (or read the first one when x = 0) to see if they compound to make the checkwork on the next loop of this while
-
-                #print(f"x={x}, Checkword: [{checkword}], checkTransWord: [{checkTransWord}]") # testing purposes
-
-                # do we have a match right now?
-                if(checkword == checkTransWord):
-                    checkWordFound = True
-
-                    # now we put together the dictionary entry we need, combining the transcriptDict entries if we had several
-                    # it's the end time of the transIndex, up to teh start time of transINdex - x
-                    wordForFinalDict = checkTransWord # it already the full string we need
-                    endTime = transcriptDict[transIndex]["end"]
-                    startTime = transcriptDict[transIndex-x]["start"]
-                    if debugMode == True:
-                        print(f"Found: [{wordForFinalDict}] from {str(startTime)} to {str(endTime)}, transIndex: {transIndex-x}")
-
-                    previouslySearchedToTransIndex = transIndex-x # record the index of the START of the concatenated word. (context check feature assumes its the start, dont change); future searches need only look later than this in the transcript
-                    transIndiciesUsed = list(range(transIndex-x,transIndex+1)) # should give us all the indicies of our compond, or just 1 entry if no compound. +1 because of how range bounds works
-
-                    # *** when updating the preciousSearchedtoTranindex, we could have something print if the change in value is very large, because tha tnormally
-                    # means that an error has occured. having that message in the output flow will make it easy to seek the user error correction thing to a the point the
-                    # transcript index was last reasonable looking, as the erroneous word tehy are correcting will often be at that location
-
-                    break # leave this search loop
-                
-                else:
-                    # if no match, we can check to see if the characters are the end of the checktranswork are the same as the ones at the end of the checkword
-                    # if so, its worth concantinating more stuff to see if we can get the full match
-                    testString = checkword[-len(checkTransWord):] # last x characters of checked work where x is the length of the current checkTransWord
-                    if(testString != checkTransWord):
-                        x = maxSearches # not gonna match no matter how much we concat, so forget this concat loop thing, let it move on
-                    
-                # assuming we don't have a match, repeat loop, it will do the above montioned concatincation and recheck
-                x = x+1
-            # ---------------------------
-
-            # now, if we have a find, we can break the loop and move on to the next base checktransword. oetherwise, we proceed to process our found records
-            if checkWordFound == True:
-                break # breaking the transIndex > -1 loop
-            else:
-                transIndex = transIndex - 1 # loop continues
-                
-        # ==================================================================================================================================
-        # ADDING WORD TO FINAL DICT AND PERFORMING VALIDATION AND SANITY CHECKS, POTENTIALLY LEADING TO USER INPUT
-
-        userInputNeeded = False
-        contextCheckPassed = False
-        
-        # now we've eitehr checked the whole transcriptDict and not found our word, or we did find SOMETHING that matches it, which may or may not be the correct word in the correct context
-        if checkWordFound == True:
-
-            # lets put it in our finalDict (note its actually a list of dictinoaries)
-            finalDict.append({
-                        "start": float(startTime),
-                        "end": float(endTime),
-                        "word": wordForFinalDict,
-                        "transIndexList": transIndiciesUsed,
-                        "wordIndex":wordIndex}) # note the index in the transcipt we record is there word starts, but it may cover several indicies
-
-            # do a check to see if the context of newly added thing is correct, and if not, it may well be a false positive from a transcription error, or similar issue. this requires
-            # the word be removed and then added manually as if it was missing instead
-
-            # we need to see if the transScript entries that have been chosen leading up to the new word will actually match up with what they should be, given previous words.
-            contextCheckPassed = utils.CheckNewWordContext(wordList, wordIndex, transcriptDict, finalDict, bestFinalDict, transIndiciesUsed)
-            userInputNeeded = not contextCheckPassed
-
+            keywordIndex = transEntry['transIndexList'][0] # might use it to set new index point, might not, see below
+            if debugMode == True:
+                print(f"Keyword entry for [{checkword}] found at transIndex: {keywordIndex}")
+            checkWordFound = True
+            finalDict.append(transEntry.copy())
+            
+            # a VERY IMPORTANT CONSIDERATION is taht this keyword business is allowed to pick words from ANYWHERE in the transcript, and doesn't follow the progressino of the
+            # 'read-head' via our previousSearchedToTransIndex variable. for that reason, we only update the value if we moved 'forward' as expected.
+            if keywordIndex <= transIndex:
+                previouslySearchedToTransIndex = keywordIndex
+            elif debugMode == True:
+                print("Keyword found at earlier transIndex than previous word. A troublemaker may be present.")
+         
+        # thats it for the ' easy way'. now for an absolutley massive else that has the regular way in it. we need this because there is still stuff towards teh end of the
+        # word loop i want to happen, so we can't just do a 'continue' or something.
+        # ---------------------------------------------------------------------------------------------------
         else:
-            # the word wasnt' found, user will try ainstead
-            userInputNeeded = True
-            contextCheckPassed = True # true in that we didn't do one, so don't react as if it occured. name is kinda misleading here but... eah...
+            # NORMAL SEARCH
 
-        # -----------------------------------------------------------------------------------------------------
-        # USER CHOICE
-        if userInputNeeded == True:
-            
-            
-            # *** refactor this so a complete choice cycle is a callable function, since we're going them in tandem here? must be a way to do it without a mess
-            
-            # if word missing/error suspected, we are going to turn what happens next over to the user, as automating the handling of this situation is too vast and error-prone a prospect
-            # the user will be shown the word, and given a list of all the transcript entries coming up, with their index numbers. they will be asked to input the correct range of
-            # index numbers, with optional inputs to move the window of entries we're looking at, or to declare that a word isn't in teh transcript and can be safely ignored.
+           # we may only allow the search to forwards a certain distance before declaring the word missing so that the user can look for it themselves
+            finalTransIndexAllowed = 0
+            if maxAllowedTranscriptJumpDistance != 0:
+                finalTransIndexAllowed = previouslySearchedToTransIndex - maxAllowedTranscriptJumpDistance
 
-            if contextCheckPassed == True:
-                print(f"\nDidn't find word [{checkword}] in the transcript. Please indicate which transcript line numbers correspond to this word, if any.")
-            else:
-                print(f"\nThe word [{checkword}] was found in the transcript but in the incorrect context. " +
-                      "Using the provided context, please indicate which transcript line numbers correspond the correct instance of this word, if any.\n"
-                      +"Note this may have been caused by manually selecting the wrong instance of this word in previous input rounds (wrong = not the final take).")
+            checkTransWord = "" 
+            startTime = 0.00
+            endTime = 0.00
 
-
-            # update: we now have a built in serach function to get the transcript display into roughly the right place. we can use that now to get a good start point
-            searchedIndex = userInterface.EstimateTransIndexForAWordFromContext(uiBall)
-            if searchedIndex == -1:
-                uiBall["indexUI"] = previouslySearchedToTransIndex # this is what will 'scroll' our view if the user changes it. this specific choice puts it where the 'readhead' is
-                                                                    # which may suck if an error caused it to jump ahead, like our classic 'alfaw' testing example.
-            else:
-                uiBall["indexUI"] = searchedIndex
+            while transIndex > -1 and transIndex >= finalTransIndexAllowed:
                 
-            # take user input for what to do next
-            newTransIndex = -1
-            newTransIndex = userInterface.ProcessUserInput(checkword, uiBall) # what we do, and the updates needed to finalDict, are all handled in here. it has its own loop to keep the
-            # script in there until something saficatory is acheived
-            
-            # the user input may have caused an update to finalDict, which means are 'readhead' moves now to look from that point
-            if newTransIndex>-1: # IF THE USER INPUT CHANGES SOMETTHING IE THEY DIDN@T CANCEL / SKIP THE WORD 
-                previouslySearchedToTransIndex = newTransIndex
-                checkWordFound = True
-                print(f"User Input Successful. New trans index: {previouslySearchedToTransIndex}")
+                checkTransWord = "" # reset
+                x = 0
+                # -----------------------------------------------------------
+                # CONCATENATION WITH OTHER TRANSWORDS LOOP
+                while (x < maxSearches) and (transIndex - x > -1):         # note that we need the second check to avoid problelms when we've shaved the transcriptDict all the way down
+                    checkTransWord = transcriptDict[transIndex-x]["word"] +checkTransWord # frontally concat the previous transWord (or read the first one when x = 0) to see if they compound to make the checkwork on the next loop of this while
 
-                # ----------------------------------------------------------------------------------------
-                # POST USER INPUT TROUBLEMAKER SCAN - THIS CAN SERIOUSLY EFFECT THE CONTINUATION OF THE MAIN LOOP!
-                # after a user input, we can go through our final dict and see if any words places in earlier were from a lower trans index (ie. they were supposed to appear later in the search).
-                # these are the mythical TROUBLEMAKERS, where a script word was transcribed wrong, but correctly later on, or mistakenly transcribed from another word later on.
-                # in these cases, we ask teh user to manually locate the trouble maker, then roll the wordIndex back there, strip our finalDict down, and restart our process from the next
-                # word. this should get everything back on teh right track, and we can repeat this if it happens again.
-                troublemakerFound, troublemakerIndex = utils.CheckFinalDictForTroublemakers(previouslySearchedToTransIndex, finalDict)
+                    #print(f"x={x}, Checkword: [{checkword}], checkTransWord: [{checkTransWord}]") # testing purposes
 
-                if troublemakerFound == True:
-                    x = finalDict[troublemakerIndex]
-                    print(f"\nWarning: A word, [{x['word']}] previously found in the transcript may have been taken from the wrong context, or been mistaken for another word." 
-                          " Please confirm the correct instance of it.")
+                    # do we have a match right now?
+                    if useFuzzyMatching == True:
+                        # if its close enough, we'll go ahead
+                        checkWordFound = utils.FuzzyMatchWords(checkTransWord, checkword, False)
+                    elif checkword == checkTransWord:
+                        checkWordFound = True
                     
-                    # we can guess that if the word BEFORE the trouble maker was right, then the real thing the troublemaker was supposed to detect is near that
-                    if troublemakerIndex>0:
-                        uiBall["indexUI"] = finalDict[troublemakerIndex-1]["transIndexList"][0]
+                    if checkWordFound == True:
+
+                        # now we put together the dictionary entry we need, combining the transcriptDict entries if we had several
+                        # it's the end time of the transIndex, up to teh start time of transINdex - x
+                        wordForFinalDict = checkTransWord # it already the full string we need
+                        endTime = transcriptDict[transIndex]["end"]
+                        startTime = transcriptDict[transIndex-x]["start"]
+                        if debugMode == True:
+                            print(f"Found: [{wordForFinalDict}] from {str(startTime)} to {str(endTime)}, transIndex: {transIndex-x}")
+
+                        previouslySearchedToTransIndex = transIndex-x # record the index of the START of the concatenated word. (context check feature assumes its the start, dont change); future searches need only look later than this in the transcript
+                        transIndiciesUsed = list(range(transIndex-x,transIndex+1)) # should give us all the indicies of our compond, or just 1 entry if no compound. +1 because of how range bounds works
+
+                        break # leave this search loop
+                    
                     else:
-                        uiBall["indexUI"] = troublemakerIndex
+                        # if no match, we can check to see if the characters are the end of the checktranswork are the same as the ones at the end of the checkword
+                        # if so, its worth concantinating more stuff to see if we can get the full match
+                        #update: because checking in caes where the final transcript entry ofa word might be 1 letter or a punctuation mark or something, we should have a minSearched
+                        # rule instead
+                        if x > minSearches:
+                            testString = checkword[-len(checkTransWord):] # last x characters of checked word where x is the length of the current checkTransWord
 
-                    # now we cut everything from the troublemaker onwwards out of the finalDict list, reset the wordIndex to pretend we're looking for that one again, then head back
-                    # to teh user interface to look for the replacement
-                    wordIndex = x["wordIndex"] # we will then nartuarlly cycle on from here at the end of current wordIndex loop, and it will all be smooth sailing. :D :D :D :D ;D
-                    uiBall["wordIndex"] = wordIndex
-                    del finalDict[troublemakerIndex:]  # nifty python way of clipping the list
+                            if useFuzzyMatching == True:
+                                # in this case, they need only be roughly correct. in particular allow for cases where the transript phonem at the end of the word is spelled differently,
+                                # which will cause a strict check to prevent all building of transcript words here. e.g. Osiriss vs Os-ir-is - no 'iss' means no buid
+                                if not utils.FuzzyMatchWords(checkTransWord,testString, False):
+                                    x = maxSearches
+                            elif(testString != checkTransWord):
+                                x = maxSearches # not gonna match no matter how much we concat, so forget this concat loop thing, let it move on
+                        
+                    # assuming we don't have a match, repeat loop, it will do the above montioned concatincation and recheck
+                    x = x+1
+                # ---------------------------
 
-                    #print(finalDict) # testing
-                    ## testing, just wanna see the context readouts after our deletion
-                    #a, b = utils.CheckNewWordContext(wordList, wordIndex, transcriptDict, finalDict, bestFinalDict, finalDict[-1]["transIndexList"])
+                # now, if we have a find, we can break the loop and move on to the next base checktransword. oetherwise, we proceed to process our found records
+                if checkWordFound == True:
+                    break # breaking the transIndex > -1 loop
+                else:
+                    transIndex = transIndex - 1 # loop continues
                     
-                    # USER INPUT
-                    newTransIndex = userInterface.ProcessUserInput(wordList[wordIndex], uiBall) # this should sort things out, if the user can be trusted LOL
+            # ==================================================================================================================================
+            # PER WORD LOOP PART 2: ADDING WORD TO FINAL DICT AND PERFORMING VALIDATION AND SANITY CHECKS, POTENTIALLY LEADING TO USER INPUT
 
-                    if newTransIndex>-1: # IF THE USER INPUT CHANGES SOMETTHING IE THEY DIDN@T CANCEL / SKIP THE WORD 
-                        previouslySearchedToTransIndex = newTransIndex
+            userInputNeeded = False
+            contextCheckPassed = False
+            
+            # now we've eitehr checked the whole transcriptDict and not found our word, or we did find SOMETHING that matches it, which may or may not be the correct word in the correct context
+            if checkWordFound == True:
 
-                # ----------------------------------------------------------------------------------------
+                # lets put it in our finalDict (note its actually a list of dictinoaries)
+                finalDict.append({
+                            "start": float(startTime),
+                            "end": float(endTime),
+                            "word": wordForFinalDict,
+                            "transIndexList": transIndiciesUsed,
+                            "wordIndex":wordIndex}) # note the index in the transcipt we record is there word starts, but it may cover several indicies
+
+                # do a check to see if the context of newly added thing is correct, and if not, it may well be a false positive from a transcription error, or similar issue. this requires
+                # the word be removed and then added manually as if it was missing instead
+
+                previouslySearchedToTransIndex = max(transIndiciesUsed) # highest = earliest = safest
+
+                # we need to see if the transScript entries that have been chosen leading up to the new word will actually match up with what they should be, given previous words.
+                contextCheckPassed = utils.CheckNewWordContext(wordList, wordIndex, transcriptDict, finalDict, bestFinalDict, transIndiciesUsed, useFuzzyMatching)
+                userInputNeeded = not contextCheckPassed
+
+                # -------------------------
+                # SUPER GUESS MODE
+                # if in super guess mode and the context check failed, we will remove the word then treat it as a missing word - this skips user input correctinos and might be roughly
+                # correct, in line with teh philosophy of super guess mode
+                if superGuessMode == True and contextCheckPassed == False:
+                    del finalDict[-1] # roll back tghe finalDict append
+                    checkWordFound = False # go on as if the word wasnt' found, in the next block - previousLySearchToTranindex will be reest in there too
+                    
+                    print(f"Context Check failure during Super Guess Mode has caused the searched-for word to be un-found. It will be guessed instead.")
+                # -------------------------
+
+            if checkWordFound == False and superGuessMode == False:
+                # the word wasnt' found, user will try ainstead
+                userInputNeeded = True
+                contextCheckPassed = True # true in that we didn't do one, so don't react as if it occured. name is kinda misleading here but... eah...
                 
-        # -----------------------------------------------------------------------------------------------------
-        # ==========================================================================================================================
+            elif checkWordFound == False and superGuessMode == True:
+                userInputNeeded = False
 
+                # i will note there that is should be the case that designiated keywords are ALWAYS found, so shouldn't ever need guessing here. just so you know. watch out.
+                if debugMode == True and checkword in keywordsList:
+                    print(f"Super Guess Mode branch accessed on a keyword [{checkword}]. Something is very wrong.")
+
+                # ----------------------------------------------------------------
+                # SUPER GUESS MODE
+                # this new version of super guess mode just skips words that weren't found. if there was a failed context check, i.e. it was found by wrongly, we remove a final
+                # dict entry, and then skip. and by 'skip' i mean we just do nothing and let the word index iterate after this, moving on. (happens is above)
+                # HOWEVER to ensure future context skkps are still accurate, we do need to shove the looked for work into the final dict AND the transcript anyway.
+
+                # all the action happens in a function, which returns the next transIndex to search for the next loop
+                previouslySearchedToTransIndex = utils.SuperGuessWord(finalDict, checkword, wordIndex, bestFinalDict, transcriptDict)
+
+                # ------------------------------------------------------------------
+
+            # -----------------------------------------------------------------------------------------------------
+            # USER CHOICE
+            if userInputNeeded == True:
+                
+                # *** refactor this so a complete choice cycle is a callable function, since we're going them in tandem here? must be a way to do it without a mess
+                
+                # if word missing/error suspected, we are going to turn what happens next over to the user, as automating the handling of this situation is too vast and error-prone a prospect
+                # the user will be shown the word, and given a list of all the transcript entries coming up, with their index numbers. they will be asked to input the correct range of
+                # index numbers, with optional inputs to move the window of entries we're looking at, or to declare that a word isn't in teh transcript and can be safely ignored.
+
+                if contextCheckPassed == True:
+                    print(f"\nDidn't find word [{checkword}] in the transcript. Please indicate which transcript line numbers correspond to this word, if any.")
+                else:
+                    print(f"\nThe word [{checkword}] was found in the transcript but in the incorrect context. " +
+                          "Using the provided context, please indicate which transcript line numbers correspond the correct instance of this word, if any.\n"
+                          +"Note this may have been caused by manually selecting the wrong instance of this word in previous input rounds (wrong = not the final take).")
+
+
+                # update: we now have a built in serach function to get the transcript display into roughly the right place. we can use that now to get a good start point
+                searchedIndex = userInterface.EstimateTransIndexForAWordFromContext(uiBall)
+                if searchedIndex == -1:
+                    uiBall["indexUI"] = previouslySearchedToTransIndex # this is what will 'scroll' our view if the user changes it. this specific choice puts it where the 'readhead' is
+                                                                        # which may suck if an error caused it to jump ahead, like our classic 'alfaw' testing example.
+                else:
+                    uiBall["indexUI"] = searchedIndex
+                    
+                # take user input for what to do next
+                newTransIndex = -1
+                newTransIndex = userInterface.ProcessUserInput(checkword, uiBall) # what we do, and the updates needed to finalDict, are all handled in here. it has its own loop to keep the
+                # script in there until something saficatory is acheived
+                
+                # the user input may have caused an update to finalDict, which means are 'readhead' moves now to look from that point
+                if newTransIndex>-1: # IF THE USER INPUT CHANGES SOMETTHING IE THEY DIDN@T CANCEL / SKIP THE WORD 
+                    previouslySearchedToTransIndex = newTransIndex
+                    checkWordFound = True
+                    print(f"User Input Successful. New trans index: {previouslySearchedToTransIndex}")
+                    
+                    # ----------------------------------------------------------------------------
+                    # MANUAL TROUBLEMAKER HANDLING
+                    # User inputs are considered keywowrds, or words we're "certain" of the position of. this allows the troublemaker handling code to run, which may prompt further user input
+                    # NOTE THIS FUCNTION CAN CHANGE THE WORD INDEX, ROLLING BACK THE MAIN LOOP WE ARE IN!!!
+                    newWordIndex, newTransIndex = utils.TroubleMakerCheckAndHandling(uiBall, previouslySearchedToTransIndex, finalDict, False)
+                    if newWordIndex > -1 and newTransIndex > -1:
+                        #print(f"Troublemaker has been handled. We are rolling back to word index {newWordIndex} and transcript index {newTransIndex}.") # maybe no message as user interface does its own things here
+                        wordIndex= newWordIndex
+                        previouslySearchedToTransIndex = newTransIndex
+                    # -----------------------------------------------------------------------------
+                    
+            # end of user input block   
+            # -----------------------------------------------------------------------------------------------------
+        # END of the big 'else' that has all the non-keyword processing in it
+
+        # ==================================================================================================================
+        # PER WORD LOOP EPILOGUE: AUTOMATED TROUBLEMAKER HANDLING
+        # If the word was a designiated keyword (meaning its only in the transript in 1 place, minimising chance of the
+        # finalDict entry we made being wrong if the word was found at all), then we can do the troublemaker hunting logic once unique to user input.
+        # this applies even when, or especially, when the word wasn't found. if we already know there is 1 case of the the word, and it SHOULD be ahead of teh readhead,
+        # and some kinds of error-based skip has already happened.
+        
+        if checkword in keywordsList:
+            # NOTE THIS FUCNTION CAN CHANGE THE WORD INDEX, ROLLING BACK THE MAIN LOOP WE ARE IN!!!
+            newWordIndex, newTransIndex = utils.TroubleMakerCheckAndHandling(uiBall, finalDict[-1]["transIndexList"][0], finalDict, superGuessMode)
+            # above, we got the transindex for the keyword that was just added. it should always be a single number, and be the previous finalDict entry.
+            
+            if newWordIndex > -1 and newTransIndex > -1:
+                print(f"Troublemaker has been handled. We are rolling back to word index {newWordIndex} and transcript index {newTransIndex}.")
+                wordIndex= newWordIndex
+                previouslySearchedToTransIndex = newTransIndex
+                
         # ------------------------------------------------------------------------------------------
+        # PER WORD LOOP COMPLETE
         # here we are are the end of the loop for a given word from the wordList (the script)
         wordIndex = wordIndex-1
-        # -------------------------------------------------------------------------------------------------
+        # ==================================================================================================================
 
     # ------------------------------------------------------
     # REVIEW RESULT AND PREPARE FOR NEXT PASS
@@ -330,10 +436,12 @@ while(startWordIndex>-1):
     # end tines of words that were in the script but weren't found (often names or things the transcripts will likely get wrong)
 
     if debugMode == True:
-        print("Final Dictionary List:")
-        print(finalDict) # for testing
+##        if len(wordList) < 1000:
+##            print("Final Dictionary List:")
+##            print(finalDict) # for testing
+
         if len(missingDict)>0:
-            print ("Missing Dict List:") # under the new user-input system, this should basically always be enpty
+            print ("Missing Dict List:") # under the new user-input / super guess mode systems, this should always be enpty
             print (missingDict)
 
 
@@ -374,22 +482,29 @@ while(startWordIndex>-1):
     # now some handy output for reference
     if(debugMode==True):
         print(f"Pass complete. New StartWordIndex = {startWordIndex} (-1 = all passes complete). New final transcript estimation:")
-        utils.PrintScriptEstimationFromDict(bestFinalDict)
+        if len(wordList) < 1000: # not very helpful, and even less so for long scripts, so i'll limit this and probably never actually require it in the final version
+            utils.PrintScriptEstimationFromDict(bestFinalDict)
     # code will now proceed to next pass, if startWordIndex was placed somewhere
     # ---------------------------------------------------
 
 # END OF MAIN LOOP
-# lets see the resulting script
-if(debugMode==False):
-    utils.PrintScriptEstimationFromDict(bestFinalDict)
-
-utils.PrintActualScript(wordList)
-
-# lets see how similar out bestFinalDict and worldList ended up being. - prints the leventshein similarity as a % (which mean similarity based on how many changes are needed to get from one to the other)
-utils.CompareBestFinalDictToActualScript(bestFinalDict, wordList)
 
 # =========================================================================================================
-# INTERMISSION
+# POST RUN REPORTING
+
+# we do some reporting, but only if teh script was short enough, since this will get messy and slow otherwise
+if len(wordList) < 1000:
+    # lets see the resulting script
+    if(debugMode==False): # need thsi because it already prints at end of every pass in debug mode, so it what we need should already be there now
+        utils.PrintScriptEstimationFromDict(bestFinalDict)
+
+    utils.PrintActualScript(wordList)
+
+    # lets see how similar out bestFinalDict and worldList ended up being. - prints the leventshein similarity as a % (which mean similarity based on how many changes are needed to get from one to the other)
+    utils.CompareBestFinalDictToActualScript(bestFinalDict, wordList)
+
+# =========================================================================================================
+# INTERMISSION / END OF PART 1, FINAL TRANSCRIPT PREPARATION
 
 # ----------------------------------------------------------------
 # SAFETY MARGINS
