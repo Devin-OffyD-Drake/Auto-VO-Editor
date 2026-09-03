@@ -14,7 +14,7 @@
 # 4) create a reliable list of where all the desired 'final take' words are, using user input to confirm where things that can't be automatically placed are supposed to be
 
 # *** EXTENDO FEATURE DESIRE: allow it to be clever about not working with words that are in the script but aren't voices. at it stands, the script must be exactly what is desired in the
-# final recording (no titles, unvoiced headings, directions, anything like that).
+# final recording (no titles, unvoiced headings, directions, anything like that). - superguess mode is fine with that as it stands
 
 # *** NEXT THING TO TRY:
 # if we force the user to manually select at least some words, it will let our post-checks trigger. it is essential it happen at least once, so perhaps the final word will always ask
@@ -31,19 +31,19 @@
 # *** whenever the user provides input, store what the search word was and the transcript text was. this can be refered to find future transcription spellings of a word
 # e.g. if the word 'Zhang' is always 'jang' in the transcript, stuff like that.
 
-
+# *** we need to investigate better transcript optins than whisper in audacity - this isprobably the true secret, but how well can it be automated?
 
 # ===========================================================================
 # HEADER AND CONSTANTS
 import utils, userInterface # the other scripts in this program
 from pathlib import Path
 
-debugMode = True
+debugMode = False
 
 # define our paths to files *** this may be done with parameters or in a GUI in teh future (same for basically all the inputs here and more yee)
 basePath = Path(__file__).parent
-pathToTranscript = basePath / "testing" / "Egypt2Trans.txt"
-pathToExpectedScript = basePath / "testing" / "Egypt2.txt"
+pathToTranscript = basePath / "testing" / "ukrainetrans.txt"
+pathToExpectedScript = basePath / "testing" / "ukrainescript.txt"
 #pathToAudioFile = basePath / "testing" / "audio.mp3" # this script doesn't need to interact with the audio file as it stands, we start from a user-provided transcript and give another one back
 outputFolder = basePath / "testing"
 
@@ -62,7 +62,7 @@ useFuzzyMatching = True
 # this will possibly account for unusual words, or cases where a word like 'guessed' becomes 'guest' and we kinda wanna go ahead anyway. this will inevitably lead to mistakes, so it
 # can't be used with will auto editing. but for quickly making a transcript for manual editing assistance, the mistakes might well be acceptable / rare enough. we shall see.
 
-superGuessMode = True 
+superGuessMode = False
 # i am replacing the preior super guess mode with a simple new approach: if a word isn't found, we just drop it and move on to the next one without updating the trans index
 # if a context error occurs e.g. it picked the wrong instance of a word, we remove it, and then also skip it instead of asking for clarification
 # also note that super guess mode overrides useFuzzyMatching ie. fuzzy matchin grules will not apply during a guess mode run.
@@ -141,7 +141,14 @@ uiBall["bestFinalDict"] = bestFinalDict # store this as it has a niche use in th
 
 print(f"Commencing transcription matching process. Fuzzy Match Mode: {useFuzzyMatching}. Super Guess Mode: {superGuessMode}. Words to match: {len(wordList)}.")
 
+# i want to add a progress-bar-like print command that will show a total of 10 times
+pbIncrements = 10.0
+pbFreq = int(len(wordList) / pbIncrements) # whole number please. then all indexes that are a mod r0 of this will trigger a progress bar draw
+
+
 while(startWordIndex>-1):
+
+
 
     finalDict = transcriptDict.copy() # gets the right structure - NOTE THAT FINALDICT IS MORE LIKE PASSDICT, a thing holding the results of a single pass. bestFinalDict is the REAL final dict. sorry.
     finalDict.clear() # empty version of the transcriptDict that will contain our matched entries
@@ -176,6 +183,10 @@ while(startWordIndex>-1):
         checkword = wordList[wordIndex] # final word in list is the next word to look for
         checkWordFound = False
 
+        # check progress bar draw
+        if wordIndex % pbFreq == 0:
+            userInterface.DrawProgressBar(wordList, wordIndex)
+
         # ===========================================================================================================
         # PER WORD LOOP - the main meat of this, and a big loop in 2 parts, once with the transdict searching loop,
         # then with a post search check and update section feat. user input or super guess mode
@@ -183,11 +194,11 @@ while(startWordIndex>-1):
         transIndex = previouslySearchedToTransIndex-1 # this is recorded upon a succeful find so teh next word loop starts in the relevant place
         transIndiciesUsed = [] # we also need to list all indicies use in teh case of compound words, to store in finalDict for assorted reporting/degbugging purpsoes
 
-        # word by word message, if you like
-        wordMsg = f"Start of search for [{checkword}] with transIndex: {transIndex})"
-        if debugMode == True and checkword in keywordsList:
-            wordMsg += " - KEYWORD"
-        print(wordMsg)
+##        # word by word message, if you like
+##        wordMsg = f"Start of search for [{checkword}] with transIndex: {transIndex})"
+##        if debugMode == True and checkword in keywordsList:
+##            wordMsg += " - KEYWORD"
+##        print(wordMsg)
 
         checkWordFound = False
 
@@ -348,7 +359,7 @@ while(startWordIndex>-1):
                 # HOWEVER to ensure future context skkps are still accurate, we do need to shove the looked for work into the final dict AND the transcript anyway.
 
                 # all the action happens in a function, which returns the next transIndex to search for the next loop
-                previouslySearchedToTransIndex = utils.SuperGuessWord(finalDict, checkword, wordIndex, bestFinalDict, transcriptDict)
+                previouslySearchedToTransIndex = utils.SuperGuessWord(finalDict, checkword, wordIndex, bestFinalDict, transcriptDict, debugMode)
 
                 # ------------------------------------------------------------------
 
@@ -393,7 +404,7 @@ while(startWordIndex>-1):
                     # MANUAL TROUBLEMAKER HANDLING
                     # User inputs are considered keywowrds, or words we're "certain" of the position of. this allows the troublemaker handling code to run, which may prompt further user input
                     # NOTE THIS FUCNTION CAN CHANGE THE WORD INDEX, ROLLING BACK THE MAIN LOOP WE ARE IN!!!
-                    newWordIndex, newTransIndex = utils.TroubleMakerCheckAndHandling(uiBall, previouslySearchedToTransIndex, finalDict, False)
+                    newWordIndex, newTransIndex = utils.TroubleMakerCheckAndHandling(uiBall, previouslySearchedToTransIndex, finalDict, False, debugMode)
                     if newWordIndex > -1 and newTransIndex > -1:
                         #print(f"Troublemaker has been handled. We are rolling back to word index {newWordIndex} and transcript index {newTransIndex}.") # maybe no message as user interface does its own things here
                         wordIndex= newWordIndex
@@ -413,11 +424,12 @@ while(startWordIndex>-1):
         
         if checkword in keywordsList:
             # NOTE THIS FUCNTION CAN CHANGE THE WORD INDEX, ROLLING BACK THE MAIN LOOP WE ARE IN!!!
-            newWordIndex, newTransIndex = utils.TroubleMakerCheckAndHandling(uiBall, finalDict[-1]["transIndexList"][0], finalDict, superGuessMode)
+            newWordIndex, newTransIndex = utils.TroubleMakerCheckAndHandling(uiBall, finalDict[-1]["transIndexList"][0], finalDict, superGuessMode, debugMode)
             # above, we got the transindex for the keyword that was just added. it should always be a single number, and be the previous finalDict entry.
             
             if newWordIndex > -1 and newTransIndex > -1:
-                print(f"Troublemaker has been handled. We are rolling back to word index {newWordIndex} and transcript index {newTransIndex}.")
+                if debugMode == True:
+                    print(f"Troublemaker has been handled. We are rolling back to word index {newWordIndex} and transcript index {newTransIndex}.")
                 wordIndex= newWordIndex
                 previouslySearchedToTransIndex = newTransIndex
                 

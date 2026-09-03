@@ -241,7 +241,7 @@ def SaveNewTranscript(path, entries): # copilot provided function to output our 
     try:
         with open(path, "w", encoding="utf-8") as f:
             for item in entries:
-                line = f"{item['start']}\t{item['end']}\t{item['word']}\n"
+                line = f"{item['start']:.3f}\t{item['end']:.3f}\t{item['word']}\n"
                 f.write(line)
         print(f"\nAligned Transcript saved at {path}")
         
@@ -469,7 +469,7 @@ def GetKeywordsList(transcriptDict, wordList, debugMode):
     # intersection of the unique sets
     return list(unique1 & unique2) # this will magically give us the things that are in both lists
 
-def TroubleMakerCheckAndHandling(uiBall, transIndex, finalDict, superGuessMode = False):
+def TroubleMakerCheckAndHandling(uiBall, transIndex, finalDict, superGuessMode = False, debugMode = False):
     # outsourced modular version of trouble maker handling, in which the final dict is checked for entries being out of order compared to the transcript, and then we
     # react depending on the use mode. transIndex should be the transcript index of something you are certain has been matched correctly.
 
@@ -495,7 +495,8 @@ def TroubleMakerCheckAndHandling(uiBall, transIndex, finalDict, superGuessMode =
             else:
                 uiBall["indexUI"] = troublemakerIndex
         else:
-            print(f"Super Guess Mode discovered a troublemaker word: [{x['word']}]. It's true location will be guessed, and the processing will be reset to this position.")
+            if debugMode == True:
+                print(f"Super Guess Mode discovered a troublemaker word: [{x['word']}]. It's true location will be guessed, and the processing will be reset to this position.")
             #print(f"Full details of troublemaker entry: {x}") # testing
             #wait = input("Press Enter to continue.")
 
@@ -517,7 +518,7 @@ def TroubleMakerCheckAndHandling(uiBall, transIndex, finalDict, superGuessMode =
             # we need to guess.
             # guess logic is simple that the word will be added with timestamps based on the previous word (assuming its correct, hmmm), and we also update the transcript to
             # make our guess look right so it will all pass future context checks. we have a function for this, since it can be called from elsewhere too.
-            newTransIndex = SuperGuessWord(finalDict,uiBall["wordList"][wordIndex],wordIndex,uiBall["bestFinalDict"],uiBall["transDict"])
+            newTransIndex = SuperGuessWord(finalDict,uiBall["wordList"][wordIndex],wordIndex,uiBall["bestFinalDict"],uiBall["transDict"], debugMode)
 
         if newTransIndex>-1: # IF THE USER INPUT OR SUPER GYESS CHANGES SOMETTHING, EG THEY DIDN'T CANCEL / SKIP THE WORD
             returnTransIndex = newTransIndex
@@ -526,7 +527,7 @@ def TroubleMakerCheckAndHandling(uiBall, transIndex, finalDict, superGuessMode =
     # return where we are in the word list now, and where we are in the transript now
     return returnWordIndex, returnTransIndex
 
-def SuperGuessWord(finalDict, word, wordIndex, bestFinalDict, transcriptDict):
+def SuperGuessWord(finalDict, word, wordIndex, bestFinalDict, transcriptDict, debugMode = False):
     # takes a word and puts it in the finalDict and the transcript, using previous entry in finalDict as a guide for the timings. we are just estimating where the word is,
     # and trying to get any label to appear somewhere near the right place.
     # returns a transIndex for where to serach next i.e. the previouslySearchedtoIndex thing
@@ -544,7 +545,8 @@ def SuperGuessWord(finalDict, word, wordIndex, bestFinalDict, transcriptDict):
 
     finalDict.append(entry) # to complete the skipping process in a 'everything is fine' looking way, to add our new perfect dummy transcript entry as the finalDict entry for thsi word. all done!
 
-    print(f"Super Guess Mode added a dummy transcript entry at index {guessIndex}: {entry}") # testing
+    if debugMode == True:
+        print(f"Super Guess Mode added a dummy transcript entry at index {guessIndex}: {entry}") # testing
 
     return guessIndex + 1 # +1 to keep our safety tradition of starting next search on the 'end' of the old one
 

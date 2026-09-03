@@ -28,8 +28,11 @@ The workflow for the use of this program will be:
 
 ## Update History
 
+### 0.6
+New progress bar output display, and general burying of debugging information when outside of debug mode (also makes processing much faster).
+
 ### 0.5
-The big Super Guess Mode update, which allows the script to produce a much more automated and potentially error prone final output at rapid speed. 
+The big Super Guess Mode update, which allows the script to produce a much more automated (still potentially error prone) final output at rapid speed. 
 Intregrates a new 'Troublemaker Hunter' automated error checking system that is much better at dealing with the assorted problems raised by transcription errors.
 So the script now has 2 main modes: automatic (versions 0.1 and 0.5) and user-input based (0.3 and 0.4). User input can allow for a perfect final transcript, but its
 quite slow to achieve, defeating the purpose of the program. Super Guess Mode will be the new default approach, seeking to achieve a 'good enough' result in a fraction of the time.

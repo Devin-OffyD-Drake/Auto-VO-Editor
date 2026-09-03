@@ -408,4 +408,20 @@ def EstimateTransIndexForAWordFromContext(uiBall):
         print(f"Search for word [{wl[wIndex]}] has failed. Sorry.")
         return -1
     
-    
+
+def DrawProgressBar(wordList, wordIndex):
+    # prints something tp represent a progress bar, based on how far through teh world list we are (going backwards)
+
+    totalCount = len(wordList)
+    currentCount = totalCount - wordIndex
+    percent = (currentCount / totalCount) * 100
+
+    msg = ""
+    for i in range(1,100): # we will make a little ascii progress bar type thing
+        if i <= percent:
+            msg += "O"
+        else:
+            msg += "-"
+
+
+    print(msg + f" {int(percent)}%")
