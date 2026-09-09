@@ -57,6 +57,7 @@ def LoadTranscript(path):
             
     except:
         print("Failed to load transcript.")
+        return []
         
     return entries
 
@@ -74,7 +75,7 @@ def LoadExpectedScript(path):
         return words
     except:
         print("Failed to load expected script")
-        return ""
+        return []
 
 def MergeMissingDictIntoFinalDict(finalDict, missingDict):
     # helper function for the missing merge stuff - see the comments at this point in the main loop for full logic here
@@ -550,3 +551,83 @@ def SuperGuessWord(finalDict, word, wordIndex, bestFinalDict, transcriptDict, de
 
     return guessIndex + 1 # +1 to keep our safety tradition of starting next search on the 'end' of the old one
 
+#################################################################################################################
+### VIBECODE ZONE ### ############################################################################################
+
+# i want to try a new typoe pf transcript, and i have asked copilot to make afunction that will convert it to be the same format as the old one
+def convert_transcript_file(input_path, output_path):
+    """
+    Convert a transcript file from the new format:
+
+        04:59.490 --> 04:59.670
+        has
+
+    Into the old format:
+
+        299.490000    299.670000    has
+    """
+
+    def time_to_seconds(t):
+        # Convert "MM:SS.mmm" or "HH:MM:SS.mmm" into float seconds
+        parts = t.split(":")
+        if len(parts) == 2:
+            # MM:SS.mmm
+            minutes, seconds = parts
+            return int(minutes) * 60 + float(seconds)
+        elif len(parts) == 3:
+            # HH:MM:SS.mmm
+            hours, minutes, seconds = parts
+            return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+        else:
+            raise ValueError(f"Invalid timestamp format: {t}")
+
+    # Read the entire file (keeping in mind the file path may have been given incorrectly, so this may error out)
+    try:
+        
+        with open(input_path, "r", encoding="utf-8") as f:
+            lines = [line.rstrip("\n") for line in f]
+
+        # ⭐ Detect format
+        is_new_format = any("-->" in line for line in lines)
+
+        if not is_new_format:
+            print("Transcript already appears to be in correct format — skipping conversion.")
+            return
+
+
+        output_lines = []
+        i = 0
+
+        while i < len(lines):
+            line = lines[i].strip()
+
+            # Look for timestamp lines
+            if "-->" in line:
+                start_str, end_str = [x.strip() for x in line.split("-->")]
+                start = time_to_seconds(start_str)
+                end = time_to_seconds(end_str)
+
+                # Next line is the text - (can be nothing though)
+                j = i + 1
+                if j >= len(lines):
+                    break
+                text = lines[j].strip()
+
+                # Build old-format line
+                output_lines.append(f"{start:.6f}\t{end:.6f}\t{text}")
+
+                # Move past the text line
+                i = j + 1
+            else:
+                i += 1
+
+        # Write the converted transcript
+        with open(output_path, "w", encoding="utf-8") as f:
+            for line in output_lines:
+                f.write(line + "\n")
+
+        print("Transcript format conversion completed.")
+
+    except:
+        print("Transcription conversion checks failed - transcript may not be available at the given path.")
+############################################################################################

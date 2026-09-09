@@ -2,10 +2,12 @@
 # ###RAW RECORDING AUTO TRANSCIPTION HELPER ###
 # For transcribing a recording that contains all the material from a given recording in a way that it transcribes ONLY the parts of the recording corresponding to the script
 # Requires OPENVino Whisper label output from Audacity as the starting transcript to use (see readme for full instructions).
+# OR it now also works with the superior Whisper transcriptions available from teh open source program 'vibe' (again, see readme).
 
 # This is part 1 of a 2 part autoedit process, where the second part will edit the audio file itself without returning to audacity. whoever the transcript created by part 1
 # can be imported into audacity, then youcan use audacity's own feature where it cuts a recording by labels to get yourself an automatically cut version, similar to what
 # part 2 is / was envisioned to achieve.
+# HYPER IMPORTANT NOTE: Due to the fact whisper transcript is very error prone, part 2 is probably impossible to implement at this time.
 
 # This script will
 # 1) take a timestamped word-by-word transcript of a recording and the intended script as input
@@ -20,8 +22,6 @@
 # if we force the user to manually select at least some words, it will let our post-checks trigger. it is essential it happen at least once, so perhaps the final word will always ask
 # so that the check is performed on teh maximum possible amount of the final result.
 
-# *** need to improve what happens when a file isn't found / load fails
-
 # *** when we load transcript and script, we need something that converts all numbers to words in a clever and accurate way, or vice versa. they need to be the same. we need to
 # avoid a case where 'eleventh' is transcribed as [11] and [th], which is what openVINO may well do.
 
@@ -31,19 +31,18 @@
 # *** whenever the user provides input, store what the search word was and the transcript text was. this can be refered to find future transcription spellings of a word
 # e.g. if the word 'Zhang' is always 'jang' in the transcript, stuff like that.
 
-# *** we need to investigate better transcript optins than whisper in audacity - this isprobably the true secret, but how well can it be automated?
-
 # ===========================================================================
 # HEADER AND CONSTANTS
 import utils, userInterface # the other scripts in this program
 from pathlib import Path
+import sys
 
 debugMode = False
 
 # define our paths to files *** this may be done with parameters or in a GUI in teh future (same for basically all the inputs here and more yee)
 basePath = Path(__file__).parent
-pathToTranscript = basePath / "testing" / "ukrainetrans.txt"
-pathToExpectedScript = basePath / "testing" / "ukrainescript.txt"
+pathToTranscript = basePath / "testing" / "NoTranscript.txt"
+pathToExpectedScript = basePath / "testing" / "NoScript.txt"
 #pathToAudioFile = basePath / "testing" / "audio.mp3" # this script doesn't need to interact with the audio file as it stands, we start from a user-provided transcript and give another one back
 outputFolder = basePath / "testing"
 
@@ -62,7 +61,7 @@ useFuzzyMatching = True
 # this will possibly account for unusual words, or cases where a word like 'guessed' becomes 'guest' and we kinda wanna go ahead anyway. this will inevitably lead to mistakes, so it
 # can't be used with will auto editing. but for quickly making a transcript for manual editing assistance, the mistakes might well be acceptable / rare enough. we shall see.
 
-superGuessMode = False
+superGuessMode = True
 # i am replacing the preior super guess mode with a simple new approach: if a word isn't found, we just drop it and move on to the next one without updating the trans index
 # if a context error occurs e.g. it picked the wrong instance of a word, we remove it, and then also skip it instead of asking for clarification
 # also note that super guess mode overrides useFuzzyMatching ie. fuzzy matchin grules will not apply during a guess mode run.
@@ -70,8 +69,17 @@ superGuessMode = False
 
 # DATA IMPORTS AND INITS
 
+# trascript format normalisation
+utils.convert_transcript_file(pathToTranscript, pathToTranscript)
+
 transcriptDict = utils.LoadTranscript(pathToTranscript)
 wordList = utils.LoadExpectedScript(pathToExpectedScript)
+
+# if load failed, let's jsut out here right away with an escape hatch
+if len(transcriptDict) == 0 or len(wordList) == 0:
+    print(f"Transcript or Script were not loaded, and so the program cannot continue. Please check the files and filepaths and try again. " +
+          f"The paths used were:\nTranscript: {pathToTranscript}\nScript: {pathToExpectedScript}")
+    sys.exit()
 
 # we define a dictionary that will hold useful refs to allow our UI script to operate alongside this main script, mainly for neatness,
     # even though it does invoke the unneatness of using this ball #refusingToUseOOPBecauseIWantToLearnHowToDoThingsAnotherWay
@@ -518,24 +526,24 @@ if len(wordList) < 1000:
 # =========================================================================================================
 # INTERMISSION / END OF PART 1, FINAL TRANSCRIPT PREPARATION
 
-# ----------------------------------------------------------------
-# SAFETY MARGINS
-# in my experience, the transcribing process usually puts the timestamps for a word slightly after the sound of it actually begins, which will cause the start of words to be
-# not marked propery as part of the correct audio. as a simple solution to this, i will move all start times forward by a certain safety margin, so that a little more of the
-# recording is considered correct.
-safetyMarginAmount= 0.15 # in seconds # *** these variables needs to be exposed to user editing in the UI-ified version of this program
-endSafetyMarginAmount = 0.02 # i want to bring in the end of each line slightly as well, due to observed inaccuracies
-for x in bestFinalDict:
-    x["start"] = x["start"] - safetyMarginAmount
-    if x["start"] < 0: # lower bound for more safety, this is almost impossible to trigger in practice but if some editing has been done already, the first syllable might be right at the start of the file
-        x["start"] = 0
-    x["end"] = x["end"] - endSafetyMarginAmount
-    if x["end"] < 0: # even more impossible that the last check, but you never know
-        x["end"] = 0
-
-# *** we could look for tiny gaps between starta nd end of each entry, and adjust bounds so that the gap is filled, to make auto-editing more smooth by keeping natural gaps
-# where possible, since the transcription process sometimes doesn't do this itself
-        
+### ----------------------------------------------------------------
+### SAFETY MARGINS - UPDATE - new transcription proess doesn't need this so much, putting this margin idea aside for now
+### in my experience, the transcribing process usually puts the timestamps for a word slightly after the sound of it actually begins, which will cause the start of words to be
+### not marked propery as part of the correct audio. as a simple solution to this, i will move all start times forward by a certain safety margin, so that a little more of the
+### recording is considered correct.
+##safetyMarginAmount= 0.15 # in seconds # *** these variables needs to be exposed to user editing in the UI-ified version of this program
+##endSafetyMarginAmount = 0.02 # i want to bring in the end of each line slightly as well, due to observed inaccuracies
+##for x in bestFinalDict:
+##    x["start"] = x["start"] - safetyMarginAmount
+##    if x["start"] < 0: # lower bound for more safety, this is almost impossible to trigger in practice but if some editing has been done already, the first syllable might be right at the start of the file
+##        x["start"] = 0
+##    x["end"] = x["end"] - endSafetyMarginAmount
+##    if x["end"] < 0: # even more impossible that the last check, but you never know
+##        x["end"] = 0
+##
+### *** we could look for tiny gaps between starta nd end of each entry, and adjust bounds so that the gap is filled, to make auto-editing more smooth by keeping natural gaps
+### where possible, since the transcription process sometimes doesn't do this itself
+##        
 # --------------------------------------------------------------
 # OUTPUT TRANSCRIPT FILE
 # it may be useful to output our finalDict in the same format as the original transcript, so that it can be imported back to audacity as a label file
