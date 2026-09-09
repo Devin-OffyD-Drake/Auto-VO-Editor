@@ -7,7 +7,7 @@ Important note: outsourcing editorial decision making to a program with a fuzzy 
 
 ## Outline
 
-This Python script will take transcript outputs from Audacity's OpenVINO implementation of whisper.cpp, and compare them to the true script.
+This Python script will take transcript outputs from Audacity's OpenVINO implementation of whisper.cpp, and compare them to the true script. It now also can use the transcripts produced by [Vibe](https://github.com/thewh1teagle/vibe), which also implements whisper.cpp but are generally more accurate.
 
 Because the transcription process is far from perfect, myriad measures and checks are required to have any hope of programatically identifying all the correct segments of the transcript needed to build the true script, and their associated timestamps.
 
@@ -18,7 +18,7 @@ When the timestamps are ready, they can, IN PRINCIPAL, be used to auto-edit the 
 
 The workflow for the use of this program will be:
 1) Create the raw recording by performing the script.
-2) Use the Open VINO Whisper transcription process to create the transcribed label track (more on this coming soon...)
+2) Use the Open VINO or Vibe Whisper transcription process to create the transcribed label track (more on this coming soon...)
 3) Export the label file in its default .txt format.
 4) Create a .txt copy of the script that doesn't contain ANY non-voiced elements. e.g. delete titles or directions.
 5) Run this program on the transcript and script .txt. Generally do what the program says. (Currently it's only CLI and the AutoEdit.py script must be hand-edited to select the relevant filepaths.) (more on this coming soon.)
@@ -28,8 +28,11 @@ The workflow for the use of this program will be:
 
 ## Update History
 
+### 0.6
+New progress bar output display, and general burying of debugging information when outside of debug mode (also makes processing much faster). Some misc minor improvements. The program is now somewhat functional and I have used it in my real production workflow. Transcription errors continue to limit usefulness, and it needs a UI / faster UX to be a genuine timesaver versus expert audio editing speed.
+
 ### 0.5
-The big Super Guess Mode update, which allows the script to produce a much more automated and potentially error prone final output at rapid speed. 
+The big Super Guess Mode update, which allows the script to produce a much more automated (still potentially error prone) final output at rapid speed. 
 Intregrates a new 'Troublemaker Hunter' automated error checking system that is much better at dealing with the assorted problems raised by transcription errors.
 So the script now has 2 main modes: automatic (versions 0.1 and 0.5) and user-input based (0.3 and 0.4). User input can allow for a perfect final transcript, but its
 quite slow to achieve, defeating the purpose of the program. Super Guess Mode will be the new default approach, seeking to achieve a 'good enough' result in a fraction of the time.

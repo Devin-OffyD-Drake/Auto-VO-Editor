@@ -57,6 +57,7 @@ def LoadTranscript(path):
             
     except:
         print("Failed to load transcript.")
+        return []
         
     return entries
 
@@ -74,7 +75,7 @@ def LoadExpectedScript(path):
         return words
     except:
         print("Failed to load expected script")
-        return ""
+        return []
 
 def MergeMissingDictIntoFinalDict(finalDict, missingDict):
     # helper function for the missing merge stuff - see the comments at this point in the main loop for full logic here
@@ -241,7 +242,7 @@ def SaveNewTranscript(path, entries): # copilot provided function to output our 
     try:
         with open(path, "w", encoding="utf-8") as f:
             for item in entries:
-                line = f"{item['start']}\t{item['end']}\t{item['word']}\n"
+                line = f"{item['start']:.3f}\t{item['end']:.3f}\t{item['word']}\n"
                 f.write(line)
         print(f"\nAligned Transcript saved at {path}")
         
@@ -469,7 +470,7 @@ def GetKeywordsList(transcriptDict, wordList, debugMode):
     # intersection of the unique sets
     return list(unique1 & unique2) # this will magically give us the things that are in both lists
 
-def TroubleMakerCheckAndHandling(uiBall, transIndex, finalDict, superGuessMode = False):
+def TroubleMakerCheckAndHandling(uiBall, transIndex, finalDict, superGuessMode = False, debugMode = False):
     # outsourced modular version of trouble maker handling, in which the final dict is checked for entries being out of order compared to the transcript, and then we
     # react depending on the use mode. transIndex should be the transcript index of something you are certain has been matched correctly.
 
@@ -495,7 +496,8 @@ def TroubleMakerCheckAndHandling(uiBall, transIndex, finalDict, superGuessMode =
             else:
                 uiBall["indexUI"] = troublemakerIndex
         else:
-            print(f"Super Guess Mode discovered a troublemaker word: [{x['word']}]. It's true location will be guessed, and the processing will be reset to this position.")
+            if debugMode == True:
+                print(f"Super Guess Mode discovered a troublemaker word: [{x['word']}]. It's true location will be guessed, and the processing will be reset to this position.")
             #print(f"Full details of troublemaker entry: {x}") # testing
             #wait = input("Press Enter to continue.")
 
@@ -517,7 +519,7 @@ def TroubleMakerCheckAndHandling(uiBall, transIndex, finalDict, superGuessMode =
             # we need to guess.
             # guess logic is simple that the word will be added with timestamps based on the previous word (assuming its correct, hmmm), and we also update the transcript to
             # make our guess look right so it will all pass future context checks. we have a function for this, since it can be called from elsewhere too.
-            newTransIndex = SuperGuessWord(finalDict,uiBall["wordList"][wordIndex],wordIndex,uiBall["bestFinalDict"],uiBall["transDict"])
+            newTransIndex = SuperGuessWord(finalDict,uiBall["wordList"][wordIndex],wordIndex,uiBall["bestFinalDict"],uiBall["transDict"], debugMode)
 
         if newTransIndex>-1: # IF THE USER INPUT OR SUPER GYESS CHANGES SOMETTHING, EG THEY DIDN'T CANCEL / SKIP THE WORD
             returnTransIndex = newTransIndex
@@ -526,7 +528,7 @@ def TroubleMakerCheckAndHandling(uiBall, transIndex, finalDict, superGuessMode =
     # return where we are in the word list now, and where we are in the transript now
     return returnWordIndex, returnTransIndex
 
-def SuperGuessWord(finalDict, word, wordIndex, bestFinalDict, transcriptDict):
+def SuperGuessWord(finalDict, word, wordIndex, bestFinalDict, transcriptDict, debugMode = False):
     # takes a word and puts it in the finalDict and the transcript, using previous entry in finalDict as a guide for the timings. we are just estimating where the word is,
     # and trying to get any label to appear somewhere near the right place.
     # returns a transIndex for where to serach next i.e. the previouslySearchedtoIndex thing
@@ -544,7 +546,88 @@ def SuperGuessWord(finalDict, word, wordIndex, bestFinalDict, transcriptDict):
 
     finalDict.append(entry) # to complete the skipping process in a 'everything is fine' looking way, to add our new perfect dummy transcript entry as the finalDict entry for thsi word. all done!
 
-    print(f"Super Guess Mode added a dummy transcript entry at index {guessIndex}: {entry}") # testing
+    if debugMode == True:
+        print(f"Super Guess Mode added a dummy transcript entry at index {guessIndex}: {entry}") # testing
 
     return guessIndex + 1 # +1 to keep our safety tradition of starting next search on the 'end' of the old one
 
+#################################################################################################################
+### VIBECODE ZONE ### ############################################################################################
+
+# i want to try a new typoe pf transcript, and i have asked copilot to make afunction that will convert it to be the same format as the old one
+def convert_transcript_file(input_path, output_path):
+    """
+    Convert a transcript file from the new format:
+
+        04:59.490 --> 04:59.670
+        has
+
+    Into the old format:
+
+        299.490000    299.670000    has
+    """
+
+    def time_to_seconds(t):
+        # Convert "MM:SS.mmm" or "HH:MM:SS.mmm" into float seconds
+        parts = t.split(":")
+        if len(parts) == 2:
+            # MM:SS.mmm
+            minutes, seconds = parts
+            return int(minutes) * 60 + float(seconds)
+        elif len(parts) == 3:
+            # HH:MM:SS.mmm
+            hours, minutes, seconds = parts
+            return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+        else:
+            raise ValueError(f"Invalid timestamp format: {t}")
+
+    # Read the entire file (keeping in mind the file path may have been given incorrectly, so this may error out)
+    try:
+        
+        with open(input_path, "r", encoding="utf-8") as f:
+            lines = [line.rstrip("\n") for line in f]
+
+        # ⭐ Detect format
+        is_new_format = any("-->" in line for line in lines)
+
+        if not is_new_format:
+            print("Transcript already appears to be in correct format — skipping conversion.")
+            return
+
+
+        output_lines = []
+        i = 0
+
+        while i < len(lines):
+            line = lines[i].strip()
+
+            # Look for timestamp lines
+            if "-->" in line:
+                start_str, end_str = [x.strip() for x in line.split("-->")]
+                start = time_to_seconds(start_str)
+                end = time_to_seconds(end_str)
+
+                # Next line is the text - (can be nothing though)
+                j = i + 1
+                if j >= len(lines):
+                    break
+                text = lines[j].strip()
+
+                # Build old-format line
+                output_lines.append(f"{start:.6f}\t{end:.6f}\t{text}")
+
+                # Move past the text line
+                i = j + 1
+            else:
+                i += 1
+
+        # Write the converted transcript
+        with open(output_path, "w", encoding="utf-8") as f:
+            for line in output_lines:
+                f.write(line + "\n")
+
+        print("Transcript format conversion completed.")
+
+    except:
+        print("Transcription conversion checks failed - transcript may not be available at the given path.")
+############################################################################################
